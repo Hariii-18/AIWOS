@@ -5,11 +5,12 @@ import {
   Coins,
   Headphones,
   Telescope,
+  type LucideProps,
 } from "lucide-react";
 import type { Department } from "@/lib/types";
 import { departments } from "@/lib/data/dashboard";
 
-const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
+const ICONS: Record<string, React.ComponentType<LucideProps>> = {
   Code2,
   Megaphone,
   Users,
@@ -23,16 +24,10 @@ function DeptCard({ dept }: { dept: Department }) {
 
   return (
     <div
-      className="cursor-pointer rounded-xl border p-3.5 text-center transition-all hover:border-border"
+      className="cursor-pointer rounded-xl border p-3.5 text-center transition-all duration-150 hover:border-[var(--border)]"
       style={{
         background: "var(--card)",
         borderColor: "var(--border-light)",
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLDivElement).style.background = "var(--accent)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLDivElement).style.background = "var(--card)";
       }}
     >
       <div
@@ -52,7 +47,7 @@ function DeptCard({ dept }: { dept: Department }) {
         style={{ background: "var(--border)" }}
       >
         <div
-          className="h-full rounded-full transition-all duration-300"
+          className="h-full rounded-full"
           style={{ width: `${dept.progress}%`, background: dept.color }}
         />
       </div>

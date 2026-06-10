@@ -5,11 +5,12 @@ import {
   DollarSign,
   TrendingUp,
   TrendingDown,
+  type LucideProps,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { StatCard as StatCardType } from "@/lib/types";
 
-const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
+const ICONS: Record<string, React.ComponentType<LucideProps>> = {
   Bot,
   Play,
   CheckCircle,
