@@ -4,11 +4,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.core.config import settings
 
-# Create async engine and sessionmaker
+# Supabase's connection pooler (port 6543, PgBouncer transaction mode) does not
+# support prepared statements, so statement caching must be disabled for asyncpg.
 async_engine = create_async_engine(
     settings.async_database_url,
     pool_pre_ping=True,
-    future=True
+    future=True,
+    connect_args={"statement_cache_size": 0},
 )
 
 AsyncSessionLocal = async_sessionmaker(

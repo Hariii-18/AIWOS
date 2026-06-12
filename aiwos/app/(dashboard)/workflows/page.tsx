@@ -1,49 +1,97 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { Plus } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Plus, Loader2 } from "lucide-react";
 import { workflowsData } from "@/lib/data/workflows";
+import { workflowApi, type WorkflowApiResponse } from "@/lib/api/workflows";
+import { useAuthStore } from "@/lib/store/auth";
 import { WorkflowSearchBar } from "@/components/workflows/WorkflowSearchBar";
 import { WorkflowFilterBar } from "@/components/workflows/WorkflowFilterBar";
 import { WorkflowTable } from "@/components/workflows/WorkflowTable";
 import { SummaryCard } from "@/components/common/SummaryCard";
+import type { Workflow } from "@/lib/data/workflows";
+
+function mapWorkflowStatus(s: string): "Active" | "Inactive" | "Paused" {
+  if (s === "Active") return "Active";
+  if (s === "Paused") return "Paused";
+  return "Inactive"; // Draft / Archived
+}
+
+function toDisplayWorkflow(w: WorkflowApiResponse): Workflow {
+  return {
+    id: w.id,
+    name: w.name,
+    description: w.description ?? "",
+    triggerEvent: "Manual",
+    assignedAgents: w.steps.slice(0, 3).map((s) => ({
+      id: s.id,
+      name: s.name,
+      initials: s.name.slice(0, 2).toUpperCase(),
+    })),
+    status: mapWorkflowStatus(w.status),
+    lastExecution: w.updated_at,
+    executionCount: 0,
+    successRate: 0,
+  };
+}
 
 export default function WorkflowsPage() {
+  const { user, currentOrgId } = useAuthStore();
+  const isGuest = user?.isGuest ?? true;
+
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
-  const filteredWorkflows = useMemo(() => {
-    return workflowsData.filter((workflow) => {
-      const matchesSearch =
-        workflow.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        workflow.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        workflow.triggerEvent
-          .toLowerCase()
-          .includes(searchQuery.toLowerCase());
+  const {
+    data: apiWorkflows,
+    isPending,
+    error,
+  } = useQuery({
+    queryKey: ["workflows", currentOrgId],
+    queryFn: () => workflowApi.list(currentOrgId!),
+    enabled: !isGuest && !!currentOrgId,
+  });
 
-      const matchesStatus = statusFilter ? workflow.status === statusFilter : true;
+  const rawWorkflows: Workflow[] = isGuest
+    ? workflowsData
+    : (apiWorkflows ?? []).map(toDisplayWorkflow);
 
-      return matchesSearch && matchesStatus;
-    });
-  }, [searchQuery, statusFilter]);
+  const filteredWorkflows = useMemo(
+    () =>
+      rawWorkflows.filter((workflow) => {
+        const matchesSearch =
+          workflow.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          workflow.description
+            .toLowerCase()
+            .includes(searchQuery.toLowerCase()) ||
+          workflow.triggerEvent
+            .toLowerCase()
+            .includes(searchQuery.toLowerCase());
+        const matchesStatus = statusFilter
+          ? workflow.status === statusFilter
+          : true;
+        return matchesSearch && matchesStatus;
+      }),
+    [rawWorkflows, searchQuery, statusFilter]
+  );
 
-  const totalWorkflows = workflowsData.length;
-  const activeWorkflows = workflowsData.filter(
-    (w) => w.status === "Active"
-  ).length;
+  const totalWorkflows = rawWorkflows.length;
+  const activeWorkflows = rawWorkflows.filter((w) => w.status === "Active").length;
   const avgSuccessRate =
-    Math.round(
-      workflowsData.reduce((sum, w) => sum + w.successRate, 0) /
-        workflowsData.length
-    ) || 0;
-  const totalExecutions = workflowsData.reduce(
+    rawWorkflows.length > 0
+      ? Math.round(
+          rawWorkflows.reduce((sum, w) => sum + w.successRate, 0) /
+            rawWorkflows.length
+        )
+      : 0;
+  const totalExecutions = rawWorkflows.reduce(
     (sum, w) => sum + w.executionCount,
     0
   );
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Workflows</h1>
@@ -54,17 +102,25 @@ export default function WorkflowsPage() {
         <button
           type="button"
           className="flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all hover:-translate-y-px focus:ring-2 focus:ring-primary/25 focus:outline-none"
-          style={{
-            background: "var(--purple)",
-            color: "white",
-          }}
+          style={{ background: "var(--purple)", color: "white" }}
         >
           <Plus size={16} />
           Create Workflow
         </button>
       </div>
 
-      {/* Quick stats */}
+      {!isGuest && !currentOrgId && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
+          No organisation found. Create one in Settings to manage workflows.
+        </div>
+      )}
+
+      {!isGuest && error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          Failed to load workflows. Please try again.
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard label="Total Workflows" value={totalWorkflows} />
         <SummaryCard label="Active" value={activeWorkflows} tone="cyan" />
@@ -79,7 +135,6 @@ export default function WorkflowsPage() {
         />
       </div>
 
-      {/* Search and filters */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="w-full min-w-0 sm:max-w-sm">
           <WorkflowSearchBar
@@ -98,8 +153,14 @@ export default function WorkflowsPage() {
         />
       </div>
 
-      {/* Table */}
-      <WorkflowTable workflows={filteredWorkflows} />
+      {isPending && !isGuest ? (
+        <div className="flex items-center justify-center py-20 text-muted-foreground">
+          <Loader2 size={20} className="mr-2 animate-spin" />
+          Loading workflows…
+        </div>
+      ) : (
+        <WorkflowTable workflows={filteredWorkflows} />
+      )}
     </div>
   );
 }

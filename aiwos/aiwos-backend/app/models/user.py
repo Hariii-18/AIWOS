@@ -19,12 +19,13 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
         Index("idx_users_email_unique", "email", unique=True, postgresql_where=text("deleted_at IS NULL")),
     )
 
-    # In Supabase, this references auth.users.id
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        primary_key=True
+        primary_key=True,
+        default=uuid.uuid4,
     )
     email: Mapped[str] = mapped_column(String(255), nullable=False)
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 

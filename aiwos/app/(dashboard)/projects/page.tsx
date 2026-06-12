@@ -1,50 +1,93 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Plus, Loader2 } from "lucide-react";
 import { projectsData } from "@/lib/data/projects";
+import { projectApi, type ProjectApiResponse } from "@/lib/api/projects";
+import { useAuthStore } from "@/lib/store/auth";
 import { ProjectSearchBar } from "@/components/projects/ProjectSearchBar";
 import { ProjectFilterBar } from "@/components/projects/ProjectFilterBar";
 import { ProjectGrid } from "@/components/projects/ProjectGrid";
 import { SummaryCard } from "@/components/common/SummaryCard";
+import type { Project } from "@/lib/data/projects";
+
+// Backend status → component status
+function mapProjectStatus(s: string): "Active" | "On Hold" | "Completed" {
+  if (s === "Active") return "Active";
+  if (s === "Completed") return "Completed";
+  return "On Hold"; // Planning / Archived
+}
+
+function toDisplayProject(p: ProjectApiResponse): Project {
+  return {
+    id: p.id,
+    title: p.name,
+    description: p.description ?? "",
+    status: mapProjectStatus(p.status),
+    progress: 0,
+    agentCount: 0,
+    agents: [],
+    startDate: p.created_at,
+    dueDate: p.updated_at,
+    priority: "Medium",
+  };
+}
 
 export default function ProjectsPage() {
+  const { user, currentOrgId } = useAuthStore();
+  const isGuest = user?.isGuest ?? true;
+
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("");
 
-  const filteredProjects = useMemo(() => {
-    return projectsData.filter((project) => {
-      const matchesSearch =
-        project.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        project.description.toLowerCase().includes(searchQuery.toLowerCase());
+  const {
+    data: apiProjects,
+    isPending,
+    error,
+  } = useQuery({
+    queryKey: ["projects", currentOrgId],
+    queryFn: () => projectApi.list(currentOrgId!),
+    enabled: !isGuest && !!currentOrgId,
+  });
 
-      const matchesStatus =
-        !selectedStatus || project.status === selectedStatus;
+  const rawProjects: Project[] = isGuest
+    ? projectsData
+    : (apiProjects ?? []).map(toDisplayProject);
 
-      return matchesSearch && matchesStatus;
-    });
-  }, [searchQuery, selectedStatus]);
+  const filteredProjects = useMemo(
+    () =>
+      rawProjects.filter((project) => {
+        const matchesSearch =
+          project.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          project.description.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesStatus =
+          !selectedStatus || project.status === selectedStatus;
+        return matchesSearch && matchesStatus;
+      }),
+    [rawProjects, searchQuery, selectedStatus]
+  );
 
   const handleReset = () => {
     setSearchQuery("");
     setSelectedStatus("");
   };
 
-  // Calculate statistics
   const stats = {
-    total: projectsData.length,
-    active: projectsData.filter((p) => p.status === "Active").length,
-    completed: projectsData.filter((p) => p.status === "Completed").length,
-    onHold: projectsData.filter((p) => p.status === "On Hold").length,
+    total: rawProjects.length,
+    active: rawProjects.filter((p) => p.status === "Active").length,
+    completed: rawProjects.filter((p) => p.status === "Completed").length,
   };
-
-  const avgProgress = Math.round(
-    projectsData.reduce((sum, p) => sum + p.progress, 0) / projectsData.length
-  );
+  const avgProgress =
+    rawProjects.length > 0
+      ? Math.round(
+          rawProjects.reduce((sum, p) => sum + p.progress, 0) /
+            rawProjects.length
+        )
+      : 0;
 
   return (
     <div className="min-h-full">
-      {/* Page header with create button */}
       <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="mb-2 text-2xl font-bold text-foreground">Projects</h1>
@@ -61,7 +104,18 @@ export default function ProjectsPage() {
         </button>
       </div>
 
-      {/* Quick stats */}
+      {!isGuest && !currentOrgId && (
+        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-400">
+          No organisation found. Create one in Settings to manage projects.
+        </div>
+      )}
+
+      {!isGuest && error && (
+        <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          Failed to load projects. Please try again.
+        </div>
+      )}
+
       <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard label="Total Projects" value={stats.total} />
         <SummaryCard label="Active" value={stats.active} tone="cyan" />
@@ -69,7 +123,6 @@ export default function ProjectsPage() {
         <SummaryCard label="Avg Progress" value={`${avgProgress}%`} />
       </div>
 
-      {/* Controls */}
       <div className="mb-6 flex flex-col gap-4 lg:flex-row">
         <div className="min-w-0 flex-1">
           <ProjectSearchBar
@@ -87,16 +140,25 @@ export default function ProjectsPage() {
         </div>
       </div>
 
-      {/* Results count */}
-      <div className="mb-4">
-        <p className="text-xs text-muted-foreground">
-          Showing <span className="font-semibold">{filteredProjects.length}</span>{" "}
-          of <span className="font-semibold">{projectsData.length}</span> projects
-        </p>
-      </div>
-
-      {/* Grid */}
-      <ProjectGrid projects={filteredProjects} />
+      {isPending && !isGuest ? (
+        <div className="flex items-center justify-center py-20 text-muted-foreground">
+          <Loader2 size={20} className="mr-2 animate-spin" />
+          Loading projects…
+        </div>
+      ) : (
+        <>
+          <div className="mb-4">
+            <p className="text-xs text-muted-foreground">
+              Showing{" "}
+              <span className="font-semibold">{filteredProjects.length}</span>{" "}
+              of{" "}
+              <span className="font-semibold">{rawProjects.length}</span>{" "}
+              projects
+            </p>
+          </div>
+          <ProjectGrid projects={filteredProjects} />
+        </>
+      )}
     </div>
   );
 }

@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "AIWOS"
     API_V1_STR: str = "/api/v1"
 
+    # JWT settings
+    SECRET_KEY: str = "change-me-in-production-use-a-long-random-string"
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
     # Database settings
     DATABASE_URL: Optional[str] = None
     ASYNC_DATABASE_URL: Optional[str] = None

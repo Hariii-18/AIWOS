@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   Bot,
@@ -14,8 +14,10 @@ import {
   Plug,
   Settings,
   MoreVertical,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/lib/store/auth";
 
 const NAV = [
   {
@@ -47,6 +49,13 @@ const NAV = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user, signOut } = useAuthStore();
+
+  const handleSignOut = () => {
+    signOut();
+    router.push("/auth");
+  };
 
   return (
     <aside
@@ -135,27 +144,33 @@ export function Sidebar() {
         className="p-3"
         style={{ borderTop: "1px solid var(--border-light)" }}
       >
-        <button
-          type="button"
-          className="flex w-full items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-card focus:ring-2 focus:ring-primary/25 focus:outline-none"
-          aria-label="Open user menu"
-        >
+        <div className="flex items-center gap-2 rounded-lg px-2 py-2">
           <div
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white"
             style={{
-              background: "linear-gradient(135deg, var(--purple), var(--cyan))",
+              background: user?.isGuest
+                ? "var(--faint)"
+                : "linear-gradient(135deg, var(--purple), var(--cyan))",
             }}
           >
-            JD
+            {user?.initials ?? "?"}
           </div>
           <div className="flex-1 text-left">
-            <div className="text-xs font-medium text-foreground">John Doe</div>
+            <div className="text-xs font-medium text-foreground">{user?.name ?? "—"}</div>
             <div className="text-[11px]" style={{ color: "var(--faint)" }}>
-              Admin
+              {user?.isGuest ? "Guest" : (user?.role ?? "")}
             </div>
           </div>
-          <MoreVertical size={12} className="text-muted-foreground" />
-        </button>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            className="ml-auto rounded p-1 text-muted-foreground transition-colors hover:text-foreground focus:outline-none"
+            aria-label="Sign out"
+            title="Sign out"
+          >
+            <LogOut size={13} />
+          </button>
+        </div>
       </div>
     </aside>
   );
