@@ -186,7 +186,24 @@ function PasswordInput({
 /* ================================================================
    SIGN IN
 ================================================================ */
-function SignInForm({ onSuccess }: { onSuccess: () => void }) {
+function InfoAlert({ message }: { message: string }) {
+  if (!message) return null;
+  return (
+    <div
+      className="mb-4 flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm"
+      style={{
+        background: "rgba(124,58,237,0.08)",
+        borderColor: "rgba(124,58,237,0.25)",
+        color: "#a78bfa",
+      }}
+    >
+      <ShieldCheck size={15} className="shrink-0" />
+      {message}
+    </div>
+  );
+}
+
+function SignInForm({ onSuccess, note }: { onSuccess: () => void; note?: string | null }) {
   const { signIn, isLoading } = useAuthStore();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -234,6 +251,7 @@ function SignInForm({ onSuccess }: { onSuccess: () => void }) {
         </p>
       </div>
 
+      <InfoAlert message={note ?? ""} />
       <ErrorAlert message={error} />
 
       <FieldGroup label="Email Address">
@@ -375,7 +393,7 @@ function SignUpForm({
   onSwitchToSignIn,
 }: {
   onSuccess: () => void;
-  onSwitchToSignIn: () => void;
+  onSwitchToSignIn: (note?: string) => void;
 }) {
   const { signUp, isLoading } = useAuthStore();
   const [step, setStep] = useState(1);
@@ -450,10 +468,28 @@ function SignUpForm({
               err instanceof Error &&
               (err as Error & { redirectToSignIn?: boolean }).redirectToSignIn
             ) {
-              onSwitchToSignIn();
+              // Account created but auto-login failed — guide user to sign in
+              onSwitchToSignIn(
+                "Your account was created! Please sign in to continue."
+              );
+            } else if (axios.isAxiosError(err) && err.response?.status === 409) {
+              // Email already registered — steer them to sign in instead
+              onSwitchToSignIn(
+                "This email is already registered. Please sign in below."
+              );
+            } else if (axios.isAxiosError(err) && !err.response) {
+              setStep(1);
+              setError("Cannot reach the server. Check your connection and try again.");
+            } else if (
+              axios.isAxiosError(err) &&
+              err.response &&
+              err.response.status >= 500
+            ) {
+              setStep(1);
+              setError("Server error. Please try again in a moment.");
             } else {
               setStep(1);
-              setError("Registration failed. The email may already be in use.");
+              setError("Registration failed. Please try again.");
             }
           }
         }, 400);
@@ -826,6 +862,7 @@ export function AuthPanel() {
   const [tab, setTab] = useState<Tab>(
     ["signin", "signup", "guest"].includes(initialTab) ? initialTab : "signin",
   );
+  const [signInNote, setSignInNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -837,12 +874,22 @@ export function AuthPanel() {
     router.replace("/dashboard");
   };
 
+  const handleTabChange = (t: Tab) => {
+    if (t !== "signin") setSignInNote(null);
+    setTab(t);
+  };
+
+  const handleSwitchToSignIn = (note?: string) => {
+    setSignInNote(note ?? null);
+    setTab("signin");
+  };
+
   return (
     <div>
-      <TabBar active={tab} onChange={setTab} />
-      {tab === "signin" && <SignInForm onSuccess={onSuccess} />}
+      <TabBar active={tab} onChange={handleTabChange} />
+      {tab === "signin" && <SignInForm onSuccess={onSuccess} note={signInNote} />}
       {tab === "signup" && (
-        <SignUpForm onSuccess={onSuccess} onSwitchToSignIn={() => setTab("signin")} />
+        <SignUpForm onSuccess={onSuccess} onSwitchToSignIn={handleSwitchToSignIn} />
       )}
       {tab === "guest" && <GuestPanel onSuccess={onSuccess} />}
     </div>

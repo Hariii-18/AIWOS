@@ -44,9 +44,9 @@ async def list_all(
 async def get_one(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> Organization:
-    return await get_organization(db, org_id)
+    return await get_organization(db, org_id, user_id=current_user.id)
 
 
 @router.patch("/{org_id}", response_model=OrganizationResponse)
@@ -54,17 +54,19 @@ async def update_one(
     org_id: uuid.UUID,
     body: OrganizationUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> Organization:
-    return await update_organization(db, org_id, body)
+    return await update_organization(db, org_id, body, user_id=current_user.id)
 
 
 @router.post("/{org_id}/provision", status_code=status.HTTP_204_NO_CONTENT)
 async def provision_one(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> None:
+    # Membership check before provisioning
+    await get_organization(db, org_id, user_id=current_user.id)
     await provision_organization(db, org_id)
 
 
@@ -72,6 +74,6 @@ async def provision_one(
 async def delete_one(
     org_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> None:
-    await delete_organization(db, org_id)
+    await delete_organization(db, org_id, user_id=current_user.id)

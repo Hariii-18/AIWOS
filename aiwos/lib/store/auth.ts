@@ -17,6 +17,8 @@ type AuthStore = {
   token: string | null;
   currentOrgId: string | null;
   isLoading: boolean;
+  _hasHydrated: boolean;
+  setHasHydrated: (hydrated: boolean) => void;
   setCurrentOrgId: (id: string | null) => void;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (
@@ -53,7 +55,9 @@ export const useAuthStore = create<AuthStore>()(
       token: null,
       currentOrgId: null,
       isLoading: false,
+      _hasHydrated: false,
 
+      setHasHydrated: (hydrated) => set({ _hasHydrated: hydrated }),
       setCurrentOrgId: (id) => set({ currentOrgId: id }),
 
       signIn: async (email: string, password: string) => {
@@ -183,12 +187,19 @@ export const useAuthStore = create<AuthStore>()(
     }),
     {
       name: "aiwos-auth",
+      // Exclude runtime-only flags from localStorage.
+      partialize: (state) => ({
+        user: state.user,
+        token: state.token,
+        currentOrgId: state.currentOrgId,
+      }),
       // Restore the dedicated token key on hydration so the API client
       // can find it immediately (before any React render).
       onRehydrateStorage: () => (state) => {
         if (state?.token && typeof window !== "undefined") {
           localStorage.setItem("aiwos-token", state.token);
         }
+        state?.setHasHydrated(true);
       },
     }
   )

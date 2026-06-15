@@ -51,7 +51,30 @@ async def create_organization(
     return org
 
 
-async def get_organization(db: AsyncSession, org_id: uuid.UUID) -> Organization:
+async def _require_membership(
+    db: AsyncSession, org_id: uuid.UUID, user_id: uuid.UUID
+) -> None:
+    """Raise 403 if user_id is not a member of org_id."""
+    result = await db.execute(
+        select(OrganizationMember).where(
+            OrganizationMember.organization_id == org_id,
+            OrganizationMember.user_id == user_id,
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied.",
+        )
+
+
+async def get_organization(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    user_id: Optional[uuid.UUID] = None,
+) -> Organization:
+    if user_id is not None:
+        await _require_membership(db, org_id, user_id)
     result = await db.execute(
         select(Organization).where(
             Organization.id == org_id,
@@ -91,8 +114,9 @@ async def update_organization(
     db: AsyncSession,
     org_id: uuid.UUID,
     body: OrganizationUpdate,
+    user_id: Optional[uuid.UUID] = None,
 ) -> Organization:
-    org = await get_organization(db, org_id)
+    org = await get_organization(db, org_id, user_id=user_id)
     update_data = body.model_dump(exclude_unset=True)
 
     if "slug" in update_data and update_data["slug"] != org.slug:
@@ -116,7 +140,11 @@ async def update_organization(
     return org
 
 
-async def delete_organization(db: AsyncSession, org_id: uuid.UUID) -> None:
-    org = await get_organization(db, org_id)
+async def delete_organization(
+    db: AsyncSession,
+    org_id: uuid.UUID,
+    user_id: Optional[uuid.UUID] = None,
+) -> None:
+    org = await get_organization(db, org_id, user_id=user_id)
     org.delete()
     await db.commit()
