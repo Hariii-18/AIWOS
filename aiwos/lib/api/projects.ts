@@ -1,0 +1,44 @@
+import { apiClient } from "./client";
+
+export type ProjectApiResponse = {
+  id: string;
+  organization_id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export const projectApi = {
+  list: (organization_id: string, skip = 0, limit = 100) =>
+    apiClient
+      .get<ProjectApiResponse[]>("/projects", {
+        params: { organization_id, skip, limit },
+      })
+      .then((r) => r.data),
+
+  get: (id: string) =>
+    apiClient
+      .get<ProjectApiResponse>(`/projects/${id}`)
+      .then((r) => r.data),
+
+  create: (data: {
+    organization_id: string;
+    name: string;
+    description?: string;
+    status?: string;
+  }) =>
+    apiClient.post<ProjectApiResponse>("/projects", data).then((r) => r.data),
+
+  update: (
+    id: string,
+    data: Partial<{ name: string; description: string; status: string }>
+  ) =>
+    apiClient
+      .patch<ProjectApiResponse>(`/projects/${id}`, data)
+      .then((r) => r.data),
+
+  delete: (id: string) => apiClient.delete(`/projects/${id}`),
+};
