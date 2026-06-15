@@ -159,10 +159,13 @@ function AuthenticatedChatPage({ orgId }: { orgId: string }) {
       setPendingConversationId(null);
       setSelectedConvId(pendingConversationId);
       setMobileView("chat");
-      // Invalidate so the new conversation appears in the list
-      queryClient.invalidateQueries({ queryKey: ["conversations", orgId] });
+      // Invalidate ONLY if the new conversation is not already in the list
+      const exists = apiConversations.some((c) => c.id === pendingConversationId);
+      if (!exists) {
+        queryClient.invalidateQueries({ queryKey: ["conversations", orgId] });
+      }
     }
-  }, [pendingConversationId, orgId, setPendingConversationId, queryClient]);
+  }, [pendingConversationId, orgId, setPendingConversationId, queryClient, apiConversations]);
 
   // Auto-select first conversation once loaded if none is selected
   useEffect(() => {
@@ -176,6 +179,12 @@ function AuthenticatedChatPage({ orgId }: { orgId: string }) {
     queryFn: () => conversationApi.get(selectedConvId!),
     enabled: !!selectedConvId,
     staleTime: 10_000,
+    initialData: () => {
+      return apiConversations.find((c) => c.id === selectedConvId);
+    },
+    initialDataUpdatedAt: () => {
+      return queryClient.getQueryState(["conversations", orgId])?.dataUpdatedAt;
+    },
   });
 
   const conversations: Conversation[] = useMemo(

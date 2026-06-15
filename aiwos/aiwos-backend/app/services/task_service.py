@@ -65,6 +65,22 @@ async def list_tasks(
     return list(result.scalars().all())
 
 
+async def list_tasks_by_org(
+    db: AsyncSession,
+    organization_id: uuid.UUID,
+    skip: int = 0,
+    limit: int = 50,
+) -> List[Task]:
+    result = await db.execute(
+        select(Task)
+        .where(Task.organization_id == organization_id, Task.deleted_at.is_(None))
+        .order_by(Task.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
 async def update_task(
     db: AsyncSession,
     task_id: uuid.UUID,

@@ -6,9 +6,10 @@ import uuid
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models.agent import Agent
 from app.models.conversation import Conversation
@@ -261,7 +262,6 @@ async def list_conversations(
 ) -> List[Conversation]:
     q = (
         select(Conversation)
-        .options(selectinload(Conversation.messages))
         .where(
             Conversation.organization_id == organization_id,
             Conversation.deleted_at.is_(None),
@@ -275,7 +275,37 @@ async def list_conversations(
     if user_id:
         q = q.where(Conversation.user_id == user_id)
     result = await db.execute(q)
-    return list(result.scalars().all())
+    conversations = list(result.scalars().all())
+
+    if conversations:
+        conv_ids = [c.id for c in conversations]
+        subq = (
+            select(
+                Message.conversation_id,
+                func.max(Message.created_at).label("max_created_at")
+            )
+            .where(Message.conversation_id.in_(conv_ids))
+            .group_by(Message.conversation_id)
+            .subquery()
+        )
+        msg_q = (
+            select(Message)
+            .join(
+                subq,
+                and_(
+                    Message.conversation_id == subq.c.conversation_id,
+                    Message.created_at == subq.c.max_created_at
+                )
+            )
+        )
+        msg_result = await db.execute(msg_q)
+        latest_messages = msg_result.scalars().all()
+        
+        msg_map = {m.conversation_id: m for m in latest_messages}
+        for c in conversations:
+            set_committed_value(c, "messages", [msg_map[c.id]] if c.id in msg_map else [])
+            
+    return conversations
 
 
 async def get_conversation_with_messages(

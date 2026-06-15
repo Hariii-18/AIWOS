@@ -1,20 +1,30 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/lib/store/auth";
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user);
   const router = useRouter();
+  const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
-    if (!user) {
+    // Check if store has already hydrated, or subscribe to finish event
+    setIsHydrated(useAuthStore.persist.hasHydrated());
+    const unsub = useAuthStore.persist.onFinishHydration(() => {
+      setIsHydrated(true);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (isHydrated && !user) {
       router.replace("/auth");
     }
-  }, [user, router]);
+  }, [isHydrated, user, router]);
 
-  if (!user) return null;
+  if (!isHydrated || !user) return null;
 
   return <>{children}</>;
 }

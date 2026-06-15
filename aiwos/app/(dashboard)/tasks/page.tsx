@@ -1,11 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery, useQueries } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
 import { tasksData } from "@/lib/data/tasks";
 import { taskApi, type TaskApiResponse } from "@/lib/api/tasks";
-import { projectApi } from "@/lib/api/projects";
 import { useAuthStore } from "@/lib/store/auth";
 import { TaskSearchBar } from "@/components/tasks/TaskSearchBar";
 import { TaskFilterBar } from "@/components/tasks/TaskFilterBar";
@@ -62,32 +61,19 @@ export default function TasksPage() {
   const [selectedStatus, setSelectedStatus] = useState("");
   const [selectedPriority, setSelectedPriority] = useState("");
 
-  // Step 1 — fetch all projects so we know their IDs
-  const { data: projects = [], isPending: projectsPending } = useQuery({
-    queryKey: ["projects", currentOrgId],
-    queryFn: () => projectApi.list(currentOrgId!),
+  const {
+    data: apiTasksData = [],
+    isPending: isLoadingTasks,
+    error,
+  } = useQuery({
+    queryKey: ["tasks", currentOrgId],
+    queryFn: () => taskApi.list({ organization_id: currentOrgId! }),
     enabled: !isGuest && !!currentOrgId,
   });
 
-  // Step 2 — fetch tasks for every project in parallel
-  const taskQueries = useQueries({
-    queries: projects.map((p) => ({
-      queryKey: ["tasks", p.id],
-      queryFn: () => taskApi.list(p.id),
-      enabled: !isGuest && !!p.id,
-    })),
-  });
+  const apiTasks: Task[] = apiTasksData.map(toDisplayTask);
 
-  const apiTasks: Task[] = taskQueries
-    .flatMap((q) => q.data ?? [])
-    .map(toDisplayTask);
-
-  const isLoadingTasks =
-    !isGuest &&
-    (projectsPending || taskQueries.some((q) => q.isPending && !q.data));
-
-  const hasError =
-    !isGuest && taskQueries.some((q) => q.error);
+  const hasError = !isGuest && !!error;
 
   const rawTasks: Task[] = isGuest ? tasksData : apiTasks;
 

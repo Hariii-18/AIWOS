@@ -62,7 +62,7 @@ export function CreateTaskDialog({ open, onClose }: Props) {
         due_date: dueDate || undefined,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["tasks", currentOrgId] });
       setSuccess(true);
       setTimeout(handleClose, 900);
     },

@@ -16,10 +16,10 @@ export type TaskApiResponse = {
 };
 
 export const taskApi = {
-  list: (project_id: string, skip = 0, limit = 100) =>
+  list: (params: { project_id?: string; organization_id?: string; skip?: number; limit?: number }) =>
     apiClient
       .get<TaskApiResponse[]>("/tasks", {
-        params: { project_id, skip, limit },
+        params,
       })
       .then((r) => r.data),
 

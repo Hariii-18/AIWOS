@@ -428,71 +428,42 @@ function SignUpForm({
 
   const finish = async () => {
     setShowSuccess(true);
-    let i = 0;
-    const tick = () => {
-      setSetupIndex(i);
-      i++;
-      if (i <= SETUP_STEPS.length) setTimeout(tick, 600);
-      else {
-        setTimeout(async () => {
-          try {
-            await signUp(
-              data.firstName,
-              data.lastName,
-              data.email,
-              data.password,
-              data.orgName
-            );
-            onSuccess();
-          } catch (err) {
-            setShowSuccess(false);
-            if (
-              err instanceof Error &&
-              (err as Error & { redirectToSignIn?: boolean }).redirectToSignIn
-            ) {
-              onSwitchToSignIn();
-            } else {
-              setStep(1);
-              setError("Registration failed. The email may already be in use.");
-            }
-          }
-        }, 400);
+    try {
+      await signUp(
+        data.firstName,
+        data.lastName,
+        data.email,
+        data.password,
+        data.orgName
+      );
+      onSuccess();
+    } catch (err) {
+      setShowSuccess(false);
+      if (
+        err instanceof Error &&
+        (err as Error & { redirectToSignIn?: boolean }).redirectToSignIn
+      ) {
+        onSwitchToSignIn();
+      } else {
+        setStep(1);
+        setError("Registration failed. The email may already be in use.");
       }
-    };
-    tick();
+    }
   };
 
   if (showSuccess) {
     return (
-      <div className="text-center">
+      <div className="text-center py-6">
         <div
           className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full"
-          style={{ background: "rgba(16,185,129,0.12)" }}
+          style={{ background: "rgba(124,58,237,0.12)" }}
         >
-          <Check size={28} style={{ color: "var(--green)" }} />
+          <Loader2 size={28} className="animate-spin" style={{ color: "var(--purple)" }} />
         </div>
-        <h2 className="mb-2 text-xl font-bold">You&apos;re all set!</h2>
-        <p className="mb-6 text-sm" style={{ color: "var(--text-secondary, #9090b0)" }}>
-          Your AI workforce is being initialized.
+        <h2 className="mb-2 text-xl font-bold">Setting up your workspace</h2>
+        <p className="text-sm text-muted-foreground">
+          Creating organization, deploying agent templates, and configuring database...
         </p>
-        <div
-          className="rounded-xl border p-4 text-left"
-          style={{ background: "var(--input-bg)", borderColor: "var(--border)" }}
-        >
-          <div className="mb-3 text-xs font-semibold">Setting up your workspace</div>
-          {SETUP_STEPS.map((s, idx) => (
-            <div key={s} className="mb-2 flex items-center gap-2 text-xs">
-              {idx < setupIndex ? (
-                <Check size={13} style={{ color: "var(--green)", flexShrink: 0 }} />
-              ) : idx === setupIndex ? (
-                <Loader2 size={13} className="animate-spin shrink-0" style={{ color: "var(--purple)" }} />
-              ) : (
-                <div className="h-3 w-3 shrink-0 rounded-full" style={{ background: "var(--border)" }} />
-              )}
-              <span style={{ color: idx < setupIndex ? "var(--foreground)" : "var(--faint)" }}>{s}</span>
-            </div>
-          ))}
-        </div>
       </div>
     );
   }
