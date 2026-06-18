@@ -2,10 +2,12 @@ import uuid
 from typing import List
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user
 from app.db.session import get_db
+from app.models.agent import Agent
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.task import TaskBulkFromProject, TaskBulkResponse, TaskCreate, TaskResponse, TaskUpdate
@@ -47,6 +49,14 @@ async def create_from_project(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> dict:
+    agents_result = await db.execute(
+        select(Agent).where(
+            Agent.organization_id == body.organization_id,
+            Agent.deleted_at.is_(None),
+        )
+    )
+    agents = list(agents_result.scalars().all())
+
     created = await create_tasks_from_project(
         db,
         project_id=body.project_id,
@@ -55,6 +65,7 @@ async def create_from_project(
         tasks=body.tasks,
         priority=body.priority,
         owner_agent_id=body.owner_agent_id,
+        agents=agents,
     )
     return {"created": created, "count": len(created)}
 

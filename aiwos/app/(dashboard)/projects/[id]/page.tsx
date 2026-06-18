@@ -1,11 +1,29 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, CheckSquare, Circle, Loader2, ListChecks, User } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  ArrowLeft,
+  CheckSquare,
+  Circle,
+  Loader2,
+  ListChecks,
+  User,
+  Users,
+  Activity,
+  Zap,
+  Eye,
+} from "lucide-react";
 import { projectApi } from "@/lib/api/projects";
 import { taskApi, type TaskApiResponse } from "@/lib/api/tasks";
+import { executionApi, type ExecutionApiResponse } from "@/lib/api/executions";
+import { ExecutionViewer } from "@/components/executions/ExecutionViewer";
 import { useAuthStore } from "@/lib/store/auth";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 function priorityColor(p: string): string {
   if (p === "High" || p === "Critical") return "var(--red)";
@@ -20,16 +38,56 @@ function statusIcon(s: string) {
   return <Circle size={14} style={{ color: "var(--border)" }} />;
 }
 
-function TaskRow({ task }: { task: TaskApiResponse }) {
+function formatRelative(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface AgentStat {
+  id: string;
+  name: string;
+  role: string;
+  total: number;
+  completed: number;
+  inProgress: number;
+  notStarted: number;
+}
+
+// ---------------------------------------------------------------------------
+// TaskRow
+// ---------------------------------------------------------------------------
+
+interface TaskRowProps {
+  task: TaskApiResponse;
+  executions: ExecutionApiResponse[];
+  onExecute: (taskId: string, agentId: string) => void;
+  onView: (executionId: string, taskTitle: string) => void;
+  isExecuting: boolean;
+}
+
+function TaskRow({ task, executions, onExecute, onView, isExecuting }: TaskRowProps) {
   const done = task.status === "Done";
+  const canExecute = !!task.assigned_to;
+  const latestExecution = executions[0] ?? null;
+
   return (
     <div
-      className="flex items-center gap-3 rounded-lg px-3 py-2.5"
+      className="flex items-center gap-3 px-3 py-2.5"
       style={{ borderBottom: "1px solid var(--border-light)" }}
     >
       {statusIcon(task.status)}
+
       <span
-        className="flex-1 text-sm"
+        className="flex-1 min-w-0 text-sm"
         style={{
           color: done ? "var(--faint)" : "var(--foreground)",
           textDecoration: done ? "line-through" : "none",
@@ -37,6 +95,18 @@ function TaskRow({ task }: { task: TaskApiResponse }) {
       >
         {task.title}
       </span>
+
+      {latestExecution && (
+        <span
+          className="shrink-0 hidden lg:flex items-center gap-1 text-[10px]"
+          style={{ color: "var(--muted-foreground)" }}
+        >
+          <Zap size={9} style={{ color: "var(--purple)" }} />
+          {executions.length} run{executions.length !== 1 ? "s" : ""} ·{" "}
+          {formatRelative(latestExecution.created_at)}
+        </span>
+      )}
+
       {task.assigned_agent && (
         <span
           className="shrink-0 hidden sm:flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium"
@@ -47,29 +117,168 @@ function TaskRow({ task }: { task: TaskApiResponse }) {
           {task.assigned_agent.name}
         </span>
       )}
+
       <span
         className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold"
-        style={{
-          background: "rgba(0,0,0,0.12)",
-          color: priorityColor(task.priority),
-        }}
+        style={{ background: "rgba(0,0,0,0.12)", color: priorityColor(task.priority) }}
       >
         {task.priority}
       </span>
+
       <span
         className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium"
         style={{ background: "var(--elevated)", color: "var(--muted-foreground)" }}
       >
         {task.status}
       </span>
+
+      {canExecute && (
+        <div className="shrink-0 flex items-center gap-1">
+          <button
+            onClick={() => onExecute(task.id, task.assigned_to!)}
+            disabled={isExecuting}
+            title="Execute task"
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium text-white transition-all hover:-translate-y-px disabled:opacity-60 disabled:cursor-not-allowed"
+            style={{ background: "var(--purple)" }}
+          >
+            {isExecuting ? (
+              <Loader2 size={9} className="animate-spin" />
+            ) : (
+              <Zap size={9} />
+            )}
+            Execute
+          </button>
+
+          {latestExecution && (
+            <button
+              onClick={() => onView(latestExecution.id, task.title)}
+              title="View latest output"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium transition-all hover:-translate-y-px"
+              style={{ background: "var(--elevated)", color: "var(--muted-foreground)" }}
+            >
+              <Eye size={9} />
+              View
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
+// ---------------------------------------------------------------------------
+// AgentCard — Team section
+// ---------------------------------------------------------------------------
+
+function AgentCard({ stat }: { stat: AgentStat }) {
+  const pct = stat.total > 0 ? Math.round((stat.completed / stat.total) * 100) : 0;
+
+  return (
+    <div
+      className="rounded-xl border p-4 flex flex-col gap-3"
+      style={{ background: "var(--card)", borderColor: "var(--border-light)" }}
+    >
+      {/* Header */}
+      <div className="flex items-start gap-2">
+        <div
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white"
+          style={{ background: "var(--purple)" }}
+        >
+          {stat.name.charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-foreground">{stat.name}</p>
+          <p className="truncate text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+            {stat.role}
+          </p>
+        </div>
+      </div>
+
+      {/* Task counts */}
+      <div className="grid grid-cols-2 gap-2">
+        <div
+          className="rounded-lg px-2.5 py-2 text-center"
+          style={{ background: "var(--elevated)" }}
+        >
+          <p className="text-base font-bold text-foreground">{stat.total}</p>
+          <p className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>Assigned</p>
+        </div>
+        <div
+          className="rounded-lg px-2.5 py-2 text-center"
+          style={{ background: "rgba(16,185,129,0.08)" }}
+        >
+          <p className="text-base font-bold" style={{ color: "var(--green)" }}>{stat.completed}</p>
+          <p className="text-[10px]" style={{ color: "var(--muted-foreground)" }}>Completed</p>
+        </div>
+      </div>
+
+      {/* Health bar */}
+      <div>
+        <div className="mb-1.5 flex items-center justify-between text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+          <span>Progress</span>
+          <span className="font-semibold text-foreground">{pct}%</span>
+        </div>
+        <div
+          className="h-1.5 overflow-hidden rounded-full"
+          style={{ background: "var(--border)" }}
+        >
+          <div
+            className="h-full rounded-full transition-all duration-300"
+            style={{
+              width: `${pct}%`,
+              background: pct === 100 ? "var(--green)" : "var(--cyan)",
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Status breakdown */}
+      <div className="flex flex-wrap gap-1.5">
+        {stat.notStarted > 0 && (
+          <span
+            className="rounded-md px-2 py-0.5 text-[10px] font-medium"
+            style={{ background: "var(--elevated)", color: "var(--muted-foreground)" }}
+          >
+            {stat.notStarted} Not Started
+          </span>
+        )}
+        {stat.inProgress > 0 && (
+          <span
+            className="rounded-md px-2 py-0.5 text-[10px] font-medium"
+            style={{ background: "rgba(6,182,212,0.12)", color: "var(--cyan)" }}
+          >
+            {stat.inProgress} In Progress
+          </span>
+        )}
+        {stat.completed > 0 && (
+          <span
+            className="rounded-md px-2 py-0.5 text-[10px] font-medium"
+            style={{ background: "rgba(16,185,129,0.12)", color: "var(--green)" }}
+          >
+            {stat.completed} Completed
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { currentOrgId } = useAuthStore();
+
+  const [viewingExecution, setViewingExecution] = useState<{
+    id: string;
+    taskTitle: string;
+  } | null>(null);
+
+  const [executingTaskId, setExecutingTaskId] = useState<string | null>(null);
 
   const { data: project, isPending: projectPending } = useQuery({
     queryKey: ["project", id],
@@ -84,9 +293,69 @@ export default function ProjectDetailPage() {
     refetchOnWindowFocus: false,
   });
 
+  const executionsByTask = useQuery({
+    queryKey: ["project-executions", id, tasks.map((t) => t.id).join(",")],
+    queryFn: async () => {
+      if (tasks.length === 0) return {} as Record<string, ExecutionApiResponse[]>;
+      const results = await Promise.all(
+        tasks
+          .filter((t) => !!t.assigned_to)
+          .map((t) =>
+            executionApi.list({ task_id: t.id, limit: 10 }).then((execs) => ({
+              taskId: t.id,
+              execs,
+            }))
+          )
+      );
+      return Object.fromEntries(results.map((r) => [r.taskId, r.execs]));
+    },
+    enabled: tasks.length > 0,
+    staleTime: 30_000,
+  });
+
+  // Aggregate per-agent stats from task data — no extra API calls
+  const agentStats = useMemo<AgentStat[]>(() => {
+    const map = new Map<string, AgentStat>();
+    for (const task of tasks) {
+      if (!task.assigned_agent) continue;
+      const { id: aid, name, role } = task.assigned_agent;
+      if (!map.has(aid)) {
+        map.set(aid, { id: aid, name, role, total: 0, completed: 0, inProgress: 0, notStarted: 0 });
+      }
+      const entry = map.get(aid)!;
+      entry.total++;
+      if (task.status === "Done") entry.completed++;
+      else if (task.status === "In Progress") entry.inProgress++;
+      else entry.notStarted++;
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [tasks]);
+
+  const executeMutation = useMutation({
+    mutationFn: ({ taskId, agentId }: { taskId: string; agentId: string }) =>
+      executionApi.execute(taskId, agentId),
+    onSuccess: (result, { taskId }) => {
+      setExecutingTaskId(null);
+      queryClient.invalidateQueries({ queryKey: ["project-executions", id] });
+      const task = tasks.find((t) => t.id === taskId);
+      setViewingExecution({ id: result.execution_id, taskTitle: task?.title ?? "Task" });
+    },
+    onError: () => setExecutingTaskId(null),
+  });
+
+  const handleExecute = (taskId: string, agentId: string) => {
+    setExecutingTaskId(taskId);
+    executeMutation.mutate({ taskId, agentId });
+  };
+
   const total = tasks.length;
   const done = tasks.filter((t) => t.status === "Done").length;
   const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  const totalRuns = Object.values(executionsByTask.data ?? {}).reduce(
+    (sum, execs) => sum + execs.length,
+    0
+  );
 
   if (projectPending) {
     return (
@@ -122,31 +391,42 @@ export default function ProjectDetailPage() {
       >
         <div className="mb-1 flex items-center justify-between gap-4">
           <h1 className="text-xl font-bold text-foreground">{project.name}</h1>
-          <span
-            className="shrink-0 rounded-full px-2.5 py-1 text-xs font-medium"
-            style={{
-              background:
-                project.status === "Active"
-                  ? "rgba(6,182,212,0.12)"
-                  : project.status === "Completed"
-                    ? "rgba(16,185,129,0.12)"
-                    : "rgba(245,158,11,0.12)",
-              color:
-                project.status === "Active"
-                  ? "var(--cyan)"
-                  : project.status === "Completed"
-                    ? "var(--green)"
-                    : "var(--amber)",
-            }}
-          >
-            {project.status}
-          </span>
+          <div className="flex items-center gap-2">
+            {totalRuns > 0 && (
+              <span
+                className="flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium"
+                style={{ background: "var(--accent-glow)", color: "var(--purple)" }}
+              >
+                <Zap size={10} />
+                {totalRuns} execution{totalRuns !== 1 ? "s" : ""}
+              </span>
+            )}
+            <span
+              className="shrink-0 rounded-full px-2.5 py-1 text-xs font-medium"
+              style={{
+                background:
+                  project.status === "Active"
+                    ? "rgba(6,182,212,0.12)"
+                    : project.status === "Completed"
+                      ? "rgba(16,185,129,0.12)"
+                      : "rgba(245,158,11,0.12)",
+                color:
+                  project.status === "Active"
+                    ? "var(--cyan)"
+                    : project.status === "Completed"
+                      ? "var(--green)"
+                      : "var(--amber)",
+              }}
+            >
+              {project.status}
+            </span>
+          </div>
         </div>
+
         {project.description && (
           <p className="mb-3 text-sm text-muted-foreground">{project.description}</p>
         )}
 
-        {/* Owner agent */}
         {project.owner_agent && (
           <div
             className="mb-4 flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
@@ -165,9 +445,7 @@ export default function ProjectDetailPage() {
         {/* Progress bar */}
         <div>
           <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              {done} / {total} tasks complete
-            </span>
+            <span>{done} / {total} tasks complete</span>
             <span className="font-semibold text-foreground">{progress}%</span>
           </div>
           <div
@@ -187,7 +465,7 @@ export default function ProjectDetailPage() {
 
       {/* Tasks section */}
       <div
-        className="rounded-xl border overflow-hidden"
+        className="mb-6 rounded-xl border overflow-hidden"
         style={{ background: "var(--card)", borderColor: "var(--border-light)" }}
       >
         <div
@@ -218,11 +496,163 @@ export default function ProjectDetailPage() {
         ) : (
           <div>
             {tasks.map((task) => (
-              <TaskRow key={task.id} task={task} />
+              <TaskRow
+                key={task.id}
+                task={task}
+                executions={executionsByTask.data?.[task.id] ?? []}
+                onExecute={handleExecute}
+                onView={(execId, taskTitle) => setViewingExecution({ id: execId, taskTitle })}
+                isExecuting={executingTaskId === task.id}
+              />
             ))}
           </div>
         )}
       </div>
+
+      {/* Team section — only rendered once tasks are loaded and agents are assigned */}
+      {!tasksPending && agentStats.length > 0 && (
+        <div className="mb-6">
+          <div className="mb-3 flex items-center gap-2">
+            <Users size={14} style={{ color: "var(--purple)" }} />
+            <span className="text-sm font-semibold text-foreground">Team</span>
+            <span
+              className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              style={{ background: "var(--elevated)", color: "var(--muted-foreground)" }}
+            >
+              {agentStats.length} agent{agentStats.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {agentStats.map((stat) => (
+              <AgentCard key={stat.id} stat={stat} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Project Health — status breakdown grouped by agent */}
+      {!tasksPending && agentStats.length > 0 && (
+        <div
+          className="mb-6 rounded-xl border overflow-hidden"
+          style={{ background: "var(--card)", borderColor: "var(--border-light)" }}
+        >
+          <div
+            className="flex items-center gap-2 px-4 py-3"
+            style={{ borderBottom: "1px solid var(--border-light)", background: "var(--surface)" }}
+          >
+            <Activity size={14} style={{ color: "var(--purple)" }} />
+            <span className="text-sm font-semibold text-foreground">Project Health</span>
+          </div>
+
+          <div className="divide-y" style={{ borderColor: "var(--border-light)" }}>
+            {agentStats.map((stat) => {
+              const pct = stat.total > 0 ? Math.round((stat.completed / stat.total) * 100) : 0;
+              return (
+                <div key={stat.id} className="flex items-center gap-4 px-4 py-3">
+                  {/* Agent label */}
+                  <div className="w-32 shrink-0">
+                    <p className="truncate text-xs font-semibold text-foreground">{stat.name}</p>
+                    <p className="truncate text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+                      {stat.role}
+                    </p>
+                  </div>
+
+                  {/* Stacked health bar */}
+                  <div className="flex flex-1 overflow-hidden rounded-full h-2 gap-px">
+                    {stat.completed > 0 && (
+                      <div
+                        className="h-full"
+                        style={{
+                          width: `${(stat.completed / stat.total) * 100}%`,
+                          background: "var(--green)",
+                        }}
+                        title={`${stat.completed} completed`}
+                      />
+                    )}
+                    {stat.inProgress > 0 && (
+                      <div
+                        className="h-full"
+                        style={{
+                          width: `${(stat.inProgress / stat.total) * 100}%`,
+                          background: "var(--cyan)",
+                        }}
+                        title={`${stat.inProgress} in progress`}
+                      />
+                    )}
+                    {stat.notStarted > 0 && (
+                      <div
+                        className="h-full"
+                        style={{
+                          width: `${(stat.notStarted / stat.total) * 100}%`,
+                          background: "var(--border)",
+                        }}
+                        title={`${stat.notStarted} not started`}
+                      />
+                    )}
+                  </div>
+
+                  {/* Percentage */}
+                  <span
+                    className="w-9 shrink-0 text-right text-xs font-semibold"
+                    style={{ color: pct === 100 ? "var(--green)" : "var(--foreground)" }}
+                  >
+                    {pct}%
+                  </span>
+
+                  {/* Legend chips */}
+                  <div className="hidden sm:flex shrink-0 gap-1.5">
+                    <span
+                      className="rounded px-1.5 py-0.5 text-[10px]"
+                      style={{ background: "var(--elevated)", color: "var(--muted-foreground)" }}
+                    >
+                      {stat.notStarted} NS
+                    </span>
+                    <span
+                      className="rounded px-1.5 py-0.5 text-[10px]"
+                      style={{ background: "rgba(6,182,212,0.12)", color: "var(--cyan)" }}
+                    >
+                      {stat.inProgress} IP
+                    </span>
+                    <span
+                      className="rounded px-1.5 py-0.5 text-[10px]"
+                      style={{ background: "rgba(16,185,129,0.12)", color: "var(--green)" }}
+                    >
+                      {stat.completed} Done
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Legend footer */}
+          <div
+            className="flex items-center gap-4 px-4 py-2.5 text-[10px]"
+            style={{ borderTop: "1px solid var(--border-light)", color: "var(--muted-foreground)" }}
+          >
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-sm" style={{ background: "var(--green)" }} />
+              Completed
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-sm" style={{ background: "var(--cyan)" }} />
+              In Progress
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-sm" style={{ background: "var(--border)" }} />
+              Not Started
+            </span>
+          </div>
+        </div>
+      )}
+
+      {viewingExecution && (
+        <ExecutionViewer
+          executionId={viewingExecution.id}
+          taskTitle={viewingExecution.taskTitle}
+          onClose={() => setViewingExecution(null)}
+        />
+      )}
     </div>
   );
 }

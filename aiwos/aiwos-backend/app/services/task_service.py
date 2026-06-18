@@ -1,5 +1,5 @@
 import uuid
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -9,6 +9,10 @@ from sqlalchemy.orm import selectinload
 
 from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate
+from app.services.task_assignment_service import assign_task
+
+if TYPE_CHECKING:
+    from app.models.agent import Agent
 
 
 async def create_tasks_from_project(
@@ -19,6 +23,7 @@ async def create_tasks_from_project(
     tasks: List[str],
     priority: str = "Medium",
     owner_agent_id: Optional[uuid.UUID] = None,
+    agents: "Optional[List[Agent]]" = None,
 ) -> List[Task]:
     existing_result = await db.execute(
         select(Task.title).where(
@@ -29,10 +34,12 @@ async def create_tasks_from_project(
     seen = {row[0] for row in existing_result.all()}
 
     to_create: List[Task] = []
+    available_agents: "List[Agent]" = agents or []
 
     for ms in milestones:
         title = ms.strip()[:255]
         if title and title not in seen:
+            assigned = assign_task(title, None, available_agents) or owner_agent_id
             to_create.append(Task(
                 id=uuid.uuid4(),
                 organization_id=organization_id,
@@ -40,13 +47,14 @@ async def create_tasks_from_project(
                 title=title,
                 priority=priority,
                 status="Todo",
-                assigned_to=owner_agent_id,
+                assigned_to=assigned,
             ))
             seen.add(title)
 
     for task_title in tasks:
         title = task_title.strip()[:255]
         if title and title not in seen:
+            assigned = assign_task(title, None, available_agents) or owner_agent_id
             to_create.append(Task(
                 id=uuid.uuid4(),
                 organization_id=organization_id,
@@ -54,7 +62,7 @@ async def create_tasks_from_project(
                 title=title,
                 priority=priority,
                 status="Todo",
-                assigned_to=owner_agent_id,
+                assigned_to=assigned,
             ))
             seen.add(title)
 

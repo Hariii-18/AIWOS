@@ -8,6 +8,7 @@ export interface Task {
   status: TaskStatus;
   priority: TaskPriority;
   assignedTo: string;
+  assignedToId?: string | null;
   dueDate: string;
   completionPercentage: number;
   tags: string[];

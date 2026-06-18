@@ -42,9 +42,8 @@ function toDisplayTask(t: TaskApiResponse): Task {
     description: t.description ?? "",
     status: mapTaskStatus(t.status),
     priority: mapPriority(t.priority),
-    assignedTo: t.assigned_to
-      ? `Agent …${t.assigned_to.slice(-6)}`
-      : "Unassigned",
+    assignedTo: t.assigned_agent?.name ?? (t.assigned_to ? `Agent …${t.assigned_to.slice(-6)}` : "Unassigned"),
+    assignedToId: t.assigned_to ?? null,
     dueDate:
       t.due_date ??
       new Date(Date.now() + 7 * 86_400_000).toISOString(),

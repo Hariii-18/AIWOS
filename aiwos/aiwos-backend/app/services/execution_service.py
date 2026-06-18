@@ -5,12 +5,13 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.context.aiwos_context import AIWOS_PROJECT_CONTEXT
 from app.models.agent import Agent
 from app.models.agent_metric import AgentMetric
 from app.models.execution_log import ExecutionLog
+from app.models.project import Project
 from app.models.task import Task
 from app.models.task_execution import TaskExecution
+from app.services.conversation_service import _build_system_prompt
 from app.services.llm_provider_service import complete as llm_complete
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
@@ -52,6 +53,7 @@ async def run_execution(db: AsyncSession, execution_id: uuid.UUID) -> TaskExecut
         )
 
     task = await _get_task(db, execution.task_id)
+    project = await _get_project(db, task.project_id)
     agent = await _resolve_agent(db, execution, task)
 
     # Stamp running state
@@ -61,7 +63,7 @@ async def run_execution(db: AsyncSession, execution_id: uuid.UUID) -> TaskExecut
     await db.commit()
 
     system_prompt = _build_system_prompt(agent)
-    user_prompt = _build_user_prompt(task)
+    user_prompt = _build_user_prompt(task, project)
     execution.input_data = {"system_prompt": system_prompt, "user_prompt": user_prompt}
 
     model = agent.model or _DEFAULT_MODEL
@@ -200,6 +202,19 @@ async def _get_execution(db: AsyncSession, execution_id: uuid.UUID) -> TaskExecu
     return execution
 
 
+async def _get_project(db: AsyncSession, project_id: uuid.UUID) -> Project:
+    result = await db.execute(
+        select(Project).where(
+            Project.id == project_id,
+            Project.deleted_at.is_(None),
+        )
+    )
+    project = result.scalar_one_or_none()
+    if project is None:
+        raise ValueError(f"Project {project_id} not found.")
+    return project
+
+
 async def _get_task(db: AsyncSession, task_id: uuid.UUID) -> Task:
     result = await db.execute(
         select(Task).where(Task.id == task_id, Task.deleted_at.is_(None))
@@ -229,21 +244,42 @@ async def _resolve_agent(
     return agent
 
 
-def _build_system_prompt(agent: Agent) -> str:
-    parts: list[str] = [f"You are {agent.name}, a {agent.role}."]
-    if agent.goal:
-        parts.append(f"## Your Goal\n{agent.goal}")
-    if agent.instructions:
-        parts.append(f"## How You Work\n{agent.instructions}")
-    parts.append(AIWOS_PROJECT_CONTEXT)
-    return "\n\n".join(parts)
-
-
-def _build_user_prompt(task: Task) -> str:
-    parts = [task.title]
+def _build_user_prompt(task: Task, project: Project) -> str:
+    lines: list[str] = [
+        "You are executing a task and must produce a professional deliverable as your output.",
+        "",
+        f"**Project:** {project.name}",
+    ]
+    if project.description:
+        lines.append(f"**Project Description:** {project.description}")
+    lines += [
+        "",
+        f"**Task:** {task.title}",
+    ]
     if task.description:
-        parts.append(task.description)
-    return "\n\n".join(parts)
+        lines.append(f"**Task Description:** {task.description}")
+    lines += [
+        "",
+        "Produce a complete, professional deliverable in Markdown. Structure your output using exactly these sections:",
+        "",
+        "# [Deliverable Title — choose a specific, professional title]",
+        "",
+        "## Executive Summary",
+        "",
+        "## Analysis",
+        "",
+        "## Recommendations",
+        "",
+        "## Implementation Plan",
+        "",
+        "## Risks",
+        "",
+        "## Next Actions",
+        "",
+        "Adapt section headings and content to your professional role and the nature of this task. "
+        "Every section must contain substantive, expert-level content — not placeholder text.",
+    ]
+    return "\n".join(lines)
 
 
 async def _insert_execution_log(
