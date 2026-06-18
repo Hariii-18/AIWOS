@@ -12,12 +12,20 @@ export interface Conversation {
   unread: number;
 }
 
+export interface ProjectRecommendationMetadata {
+  type: "project_recommendation";
+  name: string;
+  description: string;
+  tasks: string[];
+}
+
 export interface Message {
   id: string;
   conversationId: string;
   sender: "user" | "agent";
   content: string;
   timestamp: string;
+  metadata?: ProjectRecommendationMetadata | null;
 }
 
 export const CONVERSATIONS: Conversation[] = [

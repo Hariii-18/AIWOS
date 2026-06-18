@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Send, MessageCircle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ProjectRecommendationCard } from "@/components/chat/ProjectRecommendationCard";
 import type { AgentStatus, Conversation, Message } from "@/lib/data/chat";
 
 interface ChatAreaProps {
@@ -160,57 +161,69 @@ export function ChatArea({
         <div className="flex flex-col gap-3">
           {messages.map((msg) => {
             const isUser = msg.sender === "user";
+            const hasRecommendation =
+              !isUser && msg.metadata?.type === "project_recommendation";
+
             return (
-              <div
-                key={msg.id}
-                className={`flex items-end gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
-              >
-                {/* Agent avatar (only for agent messages) */}
-                {!isUser && (
+              <div key={msg.id} className="flex flex-col gap-2">
+                {/* Message row */}
+                <div
+                  className={`flex items-end gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
+                >
+                  {/* Agent avatar (only for agent messages) */}
+                  {!isUser && (
+                    <div
+                      className="mb-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                      style={{ background: conversation.agentColor }}
+                    >
+                      {conversation.agentInitials}
+                    </div>
+                  )}
+
                   <div
-                    className="mb-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white"
-                    style={{ background: conversation.agentColor }}
+                    className={`flex max-w-[75%] flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}
                   >
-                    {conversation.agentInitials}
+                    <div
+                      className="rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed"
+                      style={
+                        isUser
+                          ? {
+                              background: "var(--purple)",
+                              color: "#fff",
+                              borderBottomRightRadius: "4px",
+                            }
+                          : {
+                              background: "var(--elevated)",
+                              color: "var(--foreground)",
+                              borderBottomLeftRadius: "4px",
+                            }
+                      }
+                    >
+                      {isUser ? (
+                        msg.content
+                      ) : (
+                        <div className="aiwos-markdown">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {msg.content}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+                    </div>
+                    <span
+                      className="px-1 text-[10px]"
+                      style={{ color: "var(--faint)" }}
+                    >
+                      {msg.timestamp}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Project recommendation card — aligned with bubble (past the avatar) */}
+                {hasRecommendation && msg.metadata && (
+                  <div className="pl-9">
+                    <ProjectRecommendationCard metadata={msg.metadata} />
                   </div>
                 )}
-
-                <div
-                  className={`flex max-w-[75%] flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}
-                >
-                  <div
-                    className="rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed"
-                    style={
-                      isUser
-                        ? {
-                            background: "var(--purple)",
-                            color: "#fff",
-                            borderBottomRightRadius: "4px",
-                          }
-                        : {
-                            background: "var(--elevated)",
-                            color: "var(--foreground)",
-                            borderBottomLeftRadius: "4px",
-                          }
-                    }
-                  >
-                    {isUser ? (
-                      msg.content
-                    ) : (
-                      <div className="aiwos-markdown">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {msg.content}
-                        </ReactMarkdown>
-                      </div>
-                    )}
-                  </div>
-                  <span
-                    className="px-1 text-[10px]"
-                    style={{ color: "var(--faint)" }}
-                  >
-                    {msg.timestamp}
-                  </span>
-                </div>
               </div>
             );
           })}

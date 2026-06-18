@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,9 +26,11 @@ function apiError(err: unknown): string {
 interface Props {
   open: boolean;
   onClose: () => void;
+  initialName?: string;
+  initialDescription?: string;
 }
 
-export function CreateProjectDialog({ open, onClose }: Props) {
+export function CreateProjectDialog({ open, onClose, initialName, initialDescription }: Props) {
   const { currentOrgId } = useAuthStore();
   const queryClient = useQueryClient();
 
@@ -38,6 +40,19 @@ export function CreateProjectDialog({ open, onClose }: Props) {
   const [errors, setErrors] = useState<{ name?: string }>({});
   const [apiErr, setApiErr] = useState("");
   const [success, setSuccess] = useState(false);
+
+  // Sync prefill values whenever the dialog is opened
+  useEffect(() => {
+    if (open) {
+      setName(initialName ?? "");
+      setDescription(initialDescription ?? "");
+      setStatus("Planning");
+      setErrors({});
+      setApiErr("");
+      setSuccess(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const { mutate, isPending } = useMutation({
     mutationFn: () =>

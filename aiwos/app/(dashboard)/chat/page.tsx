@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CONVERSATIONS, MESSAGES } from "@/lib/data/chat";
-import type { Message, Conversation } from "@/lib/data/chat";
+import type { Message, Conversation, ProjectRecommendationMetadata } from "@/lib/data/chat";
 import { ConversationSidebar, avatarGradient, agentInitials } from "@/components/chat/ConversationSidebar";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { useAuthStore } from "@/lib/store/auth";
@@ -17,6 +17,49 @@ function isAwaitingAgentReply(conv: ConversationResponse | undefined): boolean {
   if (!conv || conv.messages.length === 0) return false;
   return conv.messages[conv.messages.length - 1].sender_type === "user";
 }
+
+// ---------------------------------------------------------------------------
+// Project recommendation detection
+// ---------------------------------------------------------------------------
+
+const _GENERIC_HEADINGS = new Set([
+  "plan", "overview", "summary", "approach", "analysis",
+  "response", "implementation", "recommendations", "next steps",
+  "background", "context", "conclusion",
+]);
+
+function detectProjectRecommendation(
+  content: string,
+): ProjectRecommendationMetadata | null {
+  const hasPlanSection = /^##\s+plan\b/im.test(content);
+  const bulletItems = content.match(/^[-*]\s+\S[^\n]*/gm) ?? [];
+  const hasEnoughTasks = bulletItems.length >= 3;
+
+  if (!hasPlanSection && !hasEnoughTasks) return null;
+
+  // Project name: first ## heading that isn't a generic section word
+  let name = "New Project";
+  for (const match of content.matchAll(/^##\s+(.+)/gm)) {
+    const title = match[1].trim();
+    if (!_GENERIC_HEADINGS.has(title.toLowerCase())) {
+      name = title;
+      break;
+    }
+  }
+
+  // Description: first non-empty, non-heading prose line (≥ 20 chars)
+  const descMatch = content.match(/^(?!#)(?![-*\d])([A-Z][^\n]{19,})/m);
+  const description = descMatch?.[1]?.trim() ?? "";
+
+  // Up to 5 tasks — strip markdown bold markers for clean display
+  const tasks = bulletItems
+    .slice(0, 5)
+    .map((item) => item.replace(/^[-*]\s+/, "").replace(/\*\*/g, "").trim());
+
+  return { type: "project_recommendation", name, description, tasks };
+}
+
+// ---------------------------------------------------------------------------
 
 function apiConvToFrontend(conv: ConversationResponse): Conversation {
   const agent = conv.agent;
@@ -41,16 +84,20 @@ function apiConvToFrontend(conv: ConversationResponse): Conversation {
 }
 
 function apiMsgsToFrontend(conv: ConversationResponse): Message[] {
-  return conv.messages.map((m) => ({
-    id: m.id,
-    conversationId: conv.id,
-    sender: m.sender_type === "user" ? "user" : "agent",
-    content: m.content,
-    timestamp: new Date(m.created_at).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-  }));
+  return conv.messages.map((m) => {
+    const isAgent = m.sender_type === "agent";
+    return {
+      id: m.id,
+      conversationId: conv.id,
+      sender: isAgent ? "agent" : "user",
+      content: m.content,
+      timestamp: new Date(m.created_at).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      metadata: isAgent ? detectProjectRecommendation(m.content) : null,
+    };
+  });
 }
 
 export default function ChatPage() {
