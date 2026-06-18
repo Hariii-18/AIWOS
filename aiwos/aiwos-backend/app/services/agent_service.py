@@ -1,5 +1,5 @@
 import uuid
-from typing import List
+from typing import List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -19,6 +19,7 @@ async def create_agent(db: AsyncSession, body: AgentCreate) -> Agent:
         role=body.role,
         goal=body.goal,
         instructions=body.instructions,
+        skills=body.skills,
         provider=body.provider,
         model=body.model,
         memory_config=body.memory_config,
@@ -55,14 +56,18 @@ async def list_agents(
     organization_id: uuid.UUID,
     skip: int = 0,
     limit: int = 50,
+    status_filter: Optional[str] = None,
 ) -> List[Agent]:
-    result = await db.execute(
+    q = (
         select(Agent)
         .where(Agent.organization_id == organization_id, Agent.deleted_at.is_(None))
         .order_by(Agent.created_at.desc())
         .offset(skip)
         .limit(limit)
     )
+    if status_filter:
+        q = q.where(Agent.status == status_filter)
+    result = await db.execute(q)
     return list(result.scalars().all())
 
 

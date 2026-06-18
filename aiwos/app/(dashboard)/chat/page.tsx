@@ -1,33 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CONVERSATIONS, MESSAGES } from "@/lib/data/chat";
 import type { Message, Conversation } from "@/lib/data/chat";
-import { ConversationSidebar } from "@/components/chat/ConversationSidebar";
+import { ConversationSidebar, avatarGradient, agentInitials } from "@/components/chat/ConversationSidebar";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { useAuthStore } from "@/lib/store/auth";
 import { useWorkspaceStore } from "@/lib/store/workspace";
+import { agentApi, type AgentApiResponse } from "@/lib/api/agents";
 import { conversationApi } from "@/lib/api/conversations";
 import type { ConversationResponse } from "@/lib/api/conversations";
 
-const AGENT_COLORS = [
-  "linear-gradient(135deg, #7c3aed, #4f46e5)",
-  "linear-gradient(135deg, #06b6d4, #0891b2)",
-  "linear-gradient(135deg, #10b981, #059669)",
-  "linear-gradient(135deg, #ec4899, #db2777)",
-  "linear-gradient(135deg, #f59e0b, #d97706)",
-  "linear-gradient(135deg, #8b5cf6, #6d28d9)",
-];
-
-// ── Color assigned consistently by conversation index in org
-const convColorIndex = new Map<string, number>();
-function getConvColor(convId: string, index: number): string {
-  if (!convColorIndex.has(convId)) convColorIndex.set(convId, index);
-  return AGENT_COLORS[(convColorIndex.get(convId) ?? index) % AGENT_COLORS.length];
+// An agent reply is pending whenever the last message is from the user
+function isAwaitingAgentReply(conv: ConversationResponse | undefined): boolean {
+  if (!conv || conv.messages.length === 0) return false;
+  return conv.messages[conv.messages.length - 1].sender_type === "user";
 }
 
-function apiConvToFrontend(conv: ConversationResponse, index: number): Conversation {
+function apiConvToFrontend(conv: ConversationResponse): Conversation {
   const agent = conv.agent;
   const name = agent?.name ?? "Agent";
   const lastMsg = conv.messages[conv.messages.length - 1];
@@ -35,8 +26,8 @@ function apiConvToFrontend(conv: ConversationResponse, index: number): Conversat
     id: conv.id,
     agentName: name,
     agentRole: agent?.role ?? "",
-    agentInitials: name.slice(0, 2).toUpperCase(),
-    agentColor: getConvColor(conv.id, index),
+    agentInitials: agentInitials(name),
+    agentColor: avatarGradient(agent?.id ?? conv.id),
     status: "online",
     lastMessage: lastMsg?.content.slice(0, 80) ?? conv.title,
     lastMessageAt: lastMsg
@@ -92,19 +83,13 @@ function NeedOrgState() {
 // ── Guest (mock data) ────────────────────────────────────────────────────────
 
 function GuestChatPage() {
-  const [selectedId, setSelectedId] = useState<string | null>("conv-1");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [extraMessages, setExtraMessages] = useState<Message[]>([]);
   const [mobileView, setMobileView] = useState<"sidebar" | "chat">("sidebar");
 
-  const allMessages = useMemo(() => [...MESSAGES, ...extraMessages], [extraMessages]);
-  const activeMessages = useMemo(
-    () => allMessages.filter((m) => m.conversationId === selectedId),
-    [allMessages, selectedId],
-  );
-  const selectedConversation = useMemo(
-    () => CONVERSATIONS.find((c) => c.id === selectedId) ?? null,
-    [selectedId],
-  );
+  const allMessages = [...MESSAGES, ...extraMessages];
+  const activeMessages = allMessages.filter((m) => m.conversationId === selectedId);
+  const selectedConversation = CONVERSATIONS.find((c) => c.id === selectedId) ?? null;
 
   function handleSend(conversationId: string, content: string) {
     const timestamp = new Date().toLocaleTimeString([], {
@@ -117,14 +102,76 @@ function GuestChatPage() {
     ]);
   }
 
+  // Derive fake agents from mock conversations for the sidebar
+  const fakeAgents: AgentApiResponse[] = CONVERSATIONS.map((c) => ({
+    id: c.id,
+    organization_id: "guest",
+    department_id: null,
+    name: c.agentName,
+    role: c.agentRole,
+    goal: "",
+    instructions: "",
+    skills: [],
+    provider: null,
+    model: null,
+    memory_config: null,
+    tools: [],
+    permissions: null,
+    status: "Active",
+    is_manager: false,
+    created_at: "",
+    updated_at: "",
+  }));
+
+  // Derive fake conversations for the sidebar's last-message preview
+  const fakeConvs: ConversationResponse[] = CONVERSATIONS.map((c) => {
+    const msgs = MESSAGES.filter((m) => m.conversationId === c.id);
+    const lastMsg = msgs[msgs.length - 1];
+    return {
+      id: c.id,
+      organization_id: "guest",
+      user_id: null,
+      agent_id: c.id,
+      title: c.agentName,
+      context_type: "agent",
+      context_id: null,
+      created_at: "",
+      updated_at: lastMsg?.timestamp ?? "",
+      messages: lastMsg
+        ? [{
+            id: lastMsg.id,
+            conversation_id: c.id,
+            sender_type: lastMsg.sender === "user" ? "user" : "agent",
+            sender_id: c.id,
+            content: lastMsg.content,
+            payload: null,
+            execution_id: null,
+            created_at: lastMsg.timestamp,
+          }]
+        : [],
+      agent: {
+        id: c.id,
+        name: c.agentName,
+        role: c.agentRole,
+        status: "Active",
+        provider: null,
+        model: null,
+      },
+    };
+  });
+
   return (
     <ChatShell
-      conversations={CONVERSATIONS}
-      selectedId={selectedId}
+      agents={fakeAgents}
+      conversations={fakeConvs}
+      selectedAgentId={selectedId}
+      selectedConvId={selectedId}
       messages={activeMessages}
       selectedConversation={selectedConversation}
       mobileView={mobileView}
-      onSelect={(id) => { setSelectedId(id); setMobileView("chat"); }}
+      isCreatingConv={false}
+      isExecuting={false}
+      onAgentSelect={(id) => { setSelectedId(id); setMobileView("chat"); }}
       onSend={handleSend}
       onBack={() => setMobileView("sidebar")}
     />
@@ -133,86 +180,98 @@ function GuestChatPage() {
 
 // ── Authenticated ────────────────────────────────────────────────────────────
 
-// An assistant reply is still pending whenever the most recent message in
-// the conversation was sent by the user — the agent's reply is generated by
-// a backend background task and lands a moment later.
-function isAwaitingAgentReply(conv: ConversationResponse | undefined): boolean {
-  if (!conv || conv.messages.length === 0) return false;
-  return conv.messages[conv.messages.length - 1].sender_type === "user";
-}
-
 function AuthenticatedChatPage({ orgId }: { orgId: string }) {
   const { user } = useAuthStore();
   const queryClient = useQueryClient();
+
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
+  const [isCreatingConv, setIsCreatingConv] = useState(false);
   const [mobileView, setMobileView] = useState<"sidebar" | "chat">("sidebar");
   const pendingHandled = useRef(false);
 
   const { pendingConversationId, setPendingConversationId } = useWorkspaceStore();
 
-  const { data: apiConversations = [], isLoading } = useQuery({
+  // Load all agents for the sidebar
+  const { data: agents = [], isLoading: agentsLoading } = useQuery({
+    queryKey: ["agents", orgId],
+    queryFn: () => agentApi.list(orgId),
+    enabled: !!orgId,
+    staleTime: 60_000,
+  });
+
+  // Load all conversations for last-message previews
+  const { data: allConversations = [] } = useQuery({
     queryKey: ["conversations", orgId],
-    queryFn: () =>
-      conversationApi.list({ organization_id: orgId, limit: 50 }),
+    queryFn: () => conversationApi.list({ organization_id: orgId, limit: 100 }),
     enabled: !!orgId,
     staleTime: 30_000,
   });
 
-  // On first load or when a pending conversation arrives from the dashboard,
-  // select it and clear the store.
-  useEffect(() => {
-    if (pendingConversationId && !pendingHandled.current) {
-      pendingHandled.current = true;
-      setPendingConversationId(null);
-      setSelectedConvId(pendingConversationId);
-      setMobileView("chat");
-      // Invalidate so the new conversation appears in the list
-      queryClient.invalidateQueries({ queryKey: ["conversations", orgId] });
-    }
-  }, [pendingConversationId, orgId, setPendingConversationId, queryClient]);
-
-  // Auto-select first conversation once loaded if none is selected
-  useEffect(() => {
-    if (!selectedConvId && apiConversations.length > 0 && !pendingConversationId) {
-      setSelectedConvId(apiConversations[0].id);
-    }
-  }, [apiConversations, selectedConvId, pendingConversationId]);
-
+  // Load the selected conversation with messages (+ polling while awaiting reply)
   const { data: selectedApiConv } = useQuery({
     queryKey: ["conversation", selectedConvId],
     queryFn: () => conversationApi.get(selectedConvId!),
     enabled: !!selectedConvId,
     staleTime: 10_000,
-    // While the agent's background reply hasn't landed yet, poll every 2s;
-    // stop as soon as the last message is from the agent.
     refetchInterval: (query) =>
       isAwaitingAgentReply(query.state.data as ConversationResponse | undefined)
         ? 2000
         : false,
   });
 
-  const conversations: Conversation[] = useMemo(
-    () => apiConversations.map((c, i) => apiConvToFrontend(c, i)),
-    [apiConversations],
-  );
+  // Handle pending conversation arriving from the dashboard
+  useEffect(() => {
+    if (pendingConversationId && !pendingHandled.current) {
+      pendingHandled.current = true;
+      setPendingConversationId(null);
 
-  const activeMessages: Message[] = useMemo(() => {
-    if (!selectedApiConv) return [];
-    return apiMsgsToFrontend(selectedApiConv);
-  }, [selectedApiConv]);
+      // Find the agent for this conversation and select both
+      conversationApi.get(pendingConversationId).then((conv) => {
+        if (conv.agent_id) setSelectedAgentId(conv.agent_id);
+        setSelectedConvId(pendingConversationId);
+        setMobileView("chat");
+        queryClient.invalidateQueries({ queryKey: ["conversations", orgId] });
+      });
+    }
+  }, [pendingConversationId, orgId, setPendingConversationId, queryClient]);
 
-  const selectedConversation = useMemo(
-    () => conversations.find((c) => c.id === selectedConvId) ?? null,
-    [conversations, selectedConvId],
-  );
+  async function handleAgentSelect(agentId: string) {
+    setSelectedAgentId(agentId);
+    setMobileView("chat");
+
+    // Find the most recent existing conversation for this agent
+    const existing = allConversations
+      .filter((c) => c.agent_id === agentId)
+      .sort((a, b) => (b.updated_at > a.updated_at ? 1 : -1))[0];
+
+    if (existing) {
+      setSelectedConvId(existing.id);
+      return;
+    }
+
+    // No conversation yet — create one
+    setIsCreatingConv(true);
+    try {
+      const conv = await conversationApi.create({
+        organization_id: orgId,
+        agent_id: agentId,
+        user_id: user?.id,
+      });
+      setSelectedConvId(conv.id);
+      queryClient.invalidateQueries({ queryKey: ["conversations", orgId] });
+    } catch (e) {
+      console.error("Failed to create conversation:", e);
+    } finally {
+      setIsCreatingConv(false);
+    }
+  }
 
   const sendMessage = useMutation({
     mutationFn: async ({ convId, content }: { convId: string; content: string }) => {
       return conversationApi.sendMessage(convId, content);
     },
     onSuccess: (_msgs, { convId }) => {
-      // The agent's reply isn't ready yet — this just confirms the user
-      // message was saved. Refetching kicks off the 2s poll for the reply.
       queryClient.invalidateQueries({ queryKey: ["conversation", convId] });
       queryClient.invalidateQueries({ queryKey: ["conversations", orgId] });
     },
@@ -221,14 +280,8 @@ function AuthenticatedChatPage({ orgId }: { orgId: string }) {
     },
   });
 
-  function handleSelect(id: string) {
-    setSelectedConvId(id);
-    setMobileView("chat");
-  }
-
   function handleSend(conversationId: string, content: string) {
-    // Optimistic user message so the UI feels instant — this also flips
-    // isAwaitingAgentReply to true immediately, showing the "thinking" state.
+    // Optimistic update — flips isAwaitingAgentReply immediately
     queryClient.setQueryData<ConversationResponse>(
       ["conversation", conversationId],
       (prev) => {
@@ -254,7 +307,13 @@ function AuthenticatedChatPage({ orgId }: { orgId: string }) {
     sendMessage.mutate({ convId: conversationId, content });
   }
 
-  if (isLoading && conversations.length === 0) {
+  const activeMessages: Message[] = selectedApiConv ? apiMsgsToFrontend(selectedApiConv) : [];
+
+  const selectedConversation: Conversation | null = selectedApiConv
+    ? apiConvToFrontend(selectedApiConv)
+    : null;
+
+  if (agentsLoading) {
     return (
       <div
         className="flex h-full items-center justify-center rounded-xl border"
@@ -264,50 +323,59 @@ function AuthenticatedChatPage({ orgId }: { orgId: string }) {
           height: "calc(100svh - 88px)",
         }}
       >
-        <p className="text-sm text-muted-foreground">Loading conversations…</p>
+        <p className="text-sm text-muted-foreground">Loading agents…</p>
       </div>
     );
   }
 
   return (
     <ChatShell
-      conversations={conversations}
-      selectedId={selectedConvId}
+      agents={agents}
+      conversations={allConversations}
+      selectedAgentId={selectedAgentId}
+      selectedConvId={selectedConvId}
       messages={activeMessages}
       selectedConversation={selectedConversation}
       mobileView={mobileView}
-      onSelect={handleSelect}
+      isCreatingConv={isCreatingConv}
+      isExecuting={isAwaitingAgentReply(selectedApiConv)}
+      onAgentSelect={(id) => handleAgentSelect(id)}
       onSend={handleSend}
       onBack={() => setMobileView("sidebar")}
-      isExecuting={isAwaitingAgentReply(selectedApiConv)}
     />
   );
 }
 
-// ── Shared layout ────────────────────────────────────────────────────────────
+// ── Shared shell ─────────────────────────────────────────────────────────────
 
 interface ChatShellProps {
-  conversations: Conversation[];
-  selectedId: string | null;
+  agents: AgentApiResponse[];
+  conversations: ConversationResponse[];
+  selectedAgentId: string | null;
+  selectedConvId: string | null;
   messages: Message[];
   selectedConversation: Conversation | null;
   mobileView: "sidebar" | "chat";
-  onSelect: (id: string) => void;
+  isCreatingConv: boolean;
+  isExecuting: boolean;
+  onAgentSelect: (agentId: string) => void;
   onSend: (conversationId: string, content: string) => void;
   onBack: () => void;
-  isExecuting?: boolean;
 }
 
 function ChatShell({
+  agents,
   conversations,
-  selectedId,
+  selectedAgentId,
+  selectedConvId,
   messages,
   selectedConversation,
   mobileView,
-  onSelect,
+  isCreatingConv,
+  isExecuting,
+  onAgentSelect,
   onSend,
   onBack,
-  isExecuting = false,
 }: ChatShellProps) {
   return (
     <div
@@ -319,6 +387,7 @@ function ChatShell({
       }}
     >
       <div className="flex h-full">
+        {/* Agent sidebar */}
         <div
           className={`h-full w-full shrink-0 md:block md:w-72 lg:w-80 ${
             mobileView === "chat" ? "hidden" : "block"
@@ -326,23 +395,35 @@ function ChatShell({
           style={{ background: "var(--surface)" }}
         >
           <ConversationSidebar
+            agents={agents}
             conversations={conversations}
-            selectedId={selectedId}
-            onSelect={onSelect}
+            selectedAgentId={selectedAgentId}
+            isCreating={isCreatingConv}
+            onSelect={onAgentSelect}
           />
         </div>
+
+        {/* Chat area */}
         <div
           className={`h-full min-w-0 flex-1 ${
             mobileView === "sidebar" ? "hidden md:flex md:flex-col" : "flex flex-col"
           }`}
         >
-          <ChatArea
-            conversation={selectedConversation}
-            messages={messages}
-            onBack={onBack}
-            onSend={onSend}
-            isExecuting={isExecuting}
-          />
+          {isCreatingConv && !selectedConvId ? (
+            <div className="flex h-full items-center justify-center">
+              <p className="text-sm text-muted-foreground animate-pulse">
+                Opening conversation…
+              </p>
+            </div>
+          ) : (
+            <ChatArea
+              conversation={selectedConversation}
+              messages={messages}
+              onBack={onBack}
+              onSend={onSend}
+              isExecuting={isExecuting}
+            />
+          )}
         </div>
       </div>
     </div>

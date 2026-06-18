@@ -47,6 +47,7 @@ class Agent(Base, TimestampMixin, SoftDeleteMixin):
     instructions: Mapped[str] = mapped_column(Text, nullable=False)
     memory_config: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     tools: Mapped[Any] = mapped_column(JSONB, default=list, nullable=False)
+    skills: Mapped[Any] = mapped_column(JSONB, default=list, nullable=False)
     permissions: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(
         String(50),

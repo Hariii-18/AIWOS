@@ -1,5 +1,5 @@
 import uuid
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,11 +33,12 @@ async def create(
 async def list_all(
     organization_id: uuid.UUID,
     skip: int = 0,
-    limit: int = 50,
+    limit: int = 100,
+    status: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ) -> List[Agent]:
-    return await list_agents(db, organization_id, skip=skip, limit=limit)
+    return await list_agents(db, organization_id, skip=skip, limit=limit, status_filter=status)
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)

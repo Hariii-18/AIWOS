@@ -2,6 +2,7 @@
 Conversation service: create conversations, send messages, and maintain
 multi-turn LLM context from stored history.
 
+Every conversation belongs to exactly one agent — agent_id is required.
 LLM execution runs as a FastAPI background task *after* the HTTP response is
 sent, so POST /conversations and POST .../messages return as soon as the
 conversation/user-message rows exist — they never block on a provider call.
@@ -21,12 +22,11 @@ from app.models.agent import Agent
 from app.models.conversation import Conversation
 from app.models.message import Message
 from app.schemas.conversation import ConversationCreate
-from app.services.agent_router import log_routing, route as route_agent
 from app.services.llm_provider_service import complete as llm_complete
 
 log = logging.getLogger(__name__)
 
-_HISTORY_WINDOW = 10   # how many prior messages to include as context
+_HISTORY_WINDOW = 20   # prior messages to include as context
 _FALLBACK_MODEL = "gemini-2.5-flash"
 
 
@@ -57,27 +57,55 @@ async def _get_agent(db: AsyncSession, agent_id: uuid.UUID) -> Agent:
     return agent
 
 
-async def _list_agents_for_org(db: AsyncSession, org_id: uuid.UUID) -> List[Agent]:
-    result = await db.execute(
-        select(Agent).where(
-            Agent.organization_id == org_id,
-            Agent.deleted_at.is_(None),
-        )
-    )
-    return list(result.scalars().all())
-
-
 def _build_system_prompt(agent: Agent) -> str:
-    parts = []
+    """
+    Construct a rich, identity-first system prompt from the agent's profile.
+    The model receives a clear persona so every response reflects the agent's
+    specialization — not a generic assistant.
+    """
+    skills: list = agent.skills if isinstance(agent.skills, list) else []
+
+    lines = [
+        f"You are {agent.name}, {agent.role}.",
+        "",
+        "## Your Identity",
+        f"- Name: {agent.name}",
+        f"- Role: {agent.role}",
+    ]
+
+    if skills:
+        lines.append(f"- Core Skills: {', '.join(skills)}")
+
     if agent.goal:
-        parts.append(f"Goal: {agent.goal}")
+        lines += ["", "## Your Purpose", agent.goal]
+
     if agent.instructions:
-        parts.append(agent.instructions)
-    return "\n\n".join(parts)
+        lines += ["", "## How You Operate", agent.instructions]
+
+    if skills:
+        lines += [
+            "",
+            "## Areas of Expertise",
+            "\n".join(f"- {s}" for s in skills),
+        ]
+
+    lines += [
+        "",
+        "## Behavioral Standards",
+        f"- Always respond as {agent.name} — maintain your persona throughout every message",
+        "- Draw on your specific expertise and domain knowledge in every response",
+        "- Provide detailed, actionable, and professional guidance",
+        "- Be direct, confident, and specific — avoid vague or generic advice",
+        "- If a question falls outside your domain, acknowledge it and redirect appropriately",
+        "- Structure longer responses with clear sections or bullet points",
+        "- Remember the full conversation history and build on it coherently",
+    ]
+
+    return "\n".join(lines)
 
 
 def _build_user_prompt(content: str, history: List[Message]) -> str:
-    """Prepend the last N messages as conversation history."""
+    """Prepend the last N messages as labelled conversation history."""
     if not history:
         return content
     lines = []
@@ -85,7 +113,7 @@ def _build_user_prompt(content: str, history: List[Message]) -> str:
         role = "User" if msg.sender_type == "user" else "Assistant"
         lines.append(f"{role}: {msg.content}")
     context = "\n".join(lines)
-    return f"Conversation so far:\n{context}\n\nUser: {content}"
+    return f"Conversation history:\n{context}\n\nUser: {content}\nAssistant:"
 
 
 async def _call_llm(agent: Agent, user_prompt: str) -> Tuple[str, Optional[dict]]:
@@ -110,7 +138,8 @@ async def _call_llm(agent: Agent, user_prompt: str) -> Tuple[str, Optional[dict]
         }
         return response.content, payload
     except Exception as exc:
-        return f"I encountered an error: {exc}", None
+        log.error("LLM call failed for agent=%s model=%s: %s", agent.id, model, exc)
+        return f"I encountered an error processing your request: {exc}", None
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -121,38 +150,24 @@ async def create_conversation(
     background_tasks: Optional[BackgroundTasks] = None,
 ) -> Conversation:
     """
-    Create a conversation.
+    Create a conversation for a specific agent.
 
-    - If `agent_id` is provided, use that agent.
-    - If only `prompt` is provided, match the best agent via keyword scoring.
-    - If `prompt` is also provided, it is saved as the first user message
-      immediately and the agent's reply is generated in the background —
-      this call never waits on an LLM provider.
+    agent_id is required — conversations must belong to an explicit agent.
+    If prompt is provided it is saved as the first user message immediately
+    and the agent's reply is generated in the background — this call never
+    waits on an LLM provider.
     """
-    # Resolve agent
-    if body.agent_id:
-        agent = await _get_agent(db, body.agent_id)
-    elif body.prompt:
-        agents = await _list_agents_for_org(db, body.organization_id)
-        if not agents:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="No agents found for this organization. Create an agent first.",
-            )
-        agent, intent, reason = route_agent(agents, body.prompt)
-        log_routing(body.prompt, agent, intent, reason)
-        if agent is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="No active agents found for this organization.",
-            )
-    else:
+    if not body.agent_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Provide either agent_id or prompt.",
+            detail="agent_id is required. Select an agent before starting a conversation.",
         )
 
-    title = (body.title or (body.prompt or "New Conversation")[:80]).strip() or "New Conversation"
+    agent = await _get_agent(db, body.agent_id)
+
+    title = (body.title or (body.prompt or f"Chat with {agent.name}")[:80]).strip()
+    if not title:
+        title = f"Chat with {agent.name}"
 
     conv = Conversation(
         id=uuid.uuid4(),
@@ -167,8 +182,7 @@ async def create_conversation(
     await db.commit()
     await db.refresh(conv)
 
-    # Save the first user message (if any) and hand the LLM reply off to a
-    # background task — the request returns as soon as this commits.
+    # Save the first user message (if any) and schedule the agent reply.
     if body.prompt:
         effective_user_id = body.user_id or uuid.UUID("00000000-0000-0000-0000-000000000001")
         user_msg = Message(
@@ -191,8 +205,6 @@ async def create_conversation(
             prior_messages=[],
         )
 
-        # Reload with messages (only the user message exists so far — the
-        # agent's reply lands asynchronously once the background task commits)
         result = await db.execute(
             select(Conversation)
             .options(selectinload(Conversation.messages))
@@ -223,7 +235,7 @@ async def send_message(
         )
     agent = await _get_agent(db, conv.agent_id)
 
-    # Gather recent history (messages already committed) before adding the new one
+    # Gather recent history before adding the new one
     prior = list(conv.messages)[-_HISTORY_WINDOW:]
     effective_user_id = user_id or conv.user_id or uuid.UUID("00000000-0000-0000-0000-000000000001")
 
@@ -251,7 +263,7 @@ async def send_message(
     return [user_msg]
 
 
-# ── Background LLM execution ────────────────────────────────────────────────
+# ── Background LLM execution ─────────────────────────────────────────────────
 
 def _schedule_agent_reply(
     background_tasks: Optional[BackgroundTasks],
@@ -262,13 +274,6 @@ def _schedule_agent_reply(
     content: str,
     prior_messages: List[Message],
 ) -> None:
-    """
-    Hand the LLM call off so it runs after the HTTP response is sent.
-
-    Prefers FastAPI's BackgroundTasks (guaranteed to run post-response on the
-    same event loop). Falls back to asyncio.create_task for callers that
-    don't have a BackgroundTasks instance (e.g. scripts, tests).
-    """
     kwargs = dict(
         conversation_id=conversation_id,
         organization_id=organization_id,
@@ -292,11 +297,8 @@ async def _generate_agent_reply(
 ) -> None:
     """
     Background task body: call the LLM and save the agent's message.
-
-    Runs after the request's DB session has already been closed, so it opens
-    its own session rather than reusing the one from `Depends(get_db)`.
-    Never raises — failures are logged and, where possible, saved as a
-    visible chat message instead of vanishing silently.
+    Opens its own session (the request session is already closed).
+    Never raises — failures are logged and saved as a visible error message.
     """
     async with AsyncSessionLocal() as db:
         try:

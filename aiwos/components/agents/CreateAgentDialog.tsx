@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Check } from "lucide-react";
+import { Loader2, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,6 +13,30 @@ import {
 } from "@/components/ui/dialog";
 import { agentApi } from "@/lib/api/agents";
 import { useAuthStore } from "@/lib/store/auth";
+
+const PROVIDERS = [
+  { value: "", label: "No preference (fallback)" },
+  { value: "anthropic", label: "Anthropic (Claude)" },
+  { value: "openai", label: "OpenAI (GPT)" },
+  { value: "google", label: "Google (Gemini)" },
+];
+
+const MODELS_BY_PROVIDER: Record<string, { value: string; label: string }[]> = {
+  anthropic: [
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (recommended)" },
+    { value: "claude-opus-4-8", label: "Claude Opus 4.8 (powerful)" },
+    { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (fast)" },
+  ],
+  openai: [
+    { value: "gpt-4o", label: "GPT-4o (recommended)" },
+    { value: "gpt-4o-mini", label: "GPT-4o Mini (fast)" },
+    { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
+  ],
+  google: [
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (recommended)" },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro (powerful)" },
+  ],
+};
 
 function apiError(err: unknown): string {
   if (err && typeof err === "object" && "response" in err) {
@@ -36,7 +60,11 @@ export function CreateAgentDialog({ open, onClose }: Props) {
   const [role, setRole] = useState("");
   const [goal, setGoal] = useState("");
   const [instructions, setInstructions] = useState("");
-  const [status, setStatus] = useState("Created");
+  const [skillsInput, setSkillsInput] = useState("");
+  const [skillTags, setSkillTags] = useState<string[]>([]);
+  const [provider, setProvider] = useState("");
+  const [model, setModel] = useState("");
+  const [agentStatus, setAgentStatus] = useState("Active");
   const [isManager, setIsManager] = useState(false);
   const [errors, setErrors] = useState<{
     name?: string;
@@ -47,6 +75,35 @@ export function CreateAgentDialog({ open, onClose }: Props) {
   const [apiErr, setApiErr] = useState("");
   const [success, setSuccess] = useState(false);
 
+  function addSkill(raw: string) {
+    const tags = raw
+      .split(/[,\n]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0 && !skillTags.includes(s));
+    if (tags.length) {
+      setSkillTags((prev) => [...prev, ...tags]);
+      setSkillsInput("");
+    }
+  }
+
+  function removeSkill(skill: string) {
+    setSkillTags((prev) => prev.filter((s) => s !== skill));
+  }
+
+  function handleSkillKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addSkill(skillsInput);
+    }
+  }
+
+  function handleProviderChange(p: string) {
+    setProvider(p);
+    setModel(""); // reset model when provider changes
+  }
+
+  const availableModels = MODELS_BY_PROVIDER[provider] ?? [];
+
   const { mutate, isPending } = useMutation({
     mutationFn: () =>
       agentApi.create({
@@ -55,7 +112,10 @@ export function CreateAgentDialog({ open, onClose }: Props) {
         role: role.trim(),
         goal: goal.trim(),
         instructions: instructions.trim(),
-        status,
+        skills: skillTags,
+        provider: provider || null,
+        model: model || null,
+        status: agentStatus,
         is_manager: isManager,
         tools: [],
       }),
@@ -73,7 +133,11 @@ export function CreateAgentDialog({ open, onClose }: Props) {
     setRole("");
     setGoal("");
     setInstructions("");
-    setStatus("Created");
+    setSkillsInput("");
+    setSkillTags([]);
+    setProvider("");
+    setModel("");
+    setAgentStatus("Active");
     setIsManager(false);
     setErrors({});
     setApiErr("");
@@ -94,8 +158,7 @@ export function CreateAgentDialog({ open, onClose }: Props) {
     mutate();
   };
 
-  const field =
-    "h-10 w-full rounded-lg border px-3 text-sm outline-none transition-colors";
+  const field = "h-10 w-full rounded-lg border px-3 text-sm outline-none transition-colors";
   const fieldStyle = (err?: string) => ({
     background: "var(--input-bg)",
     borderColor: err ? "var(--red)" : "var(--border)",
@@ -109,11 +172,11 @@ export function CreateAgentDialog({ open, onClose }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && handleClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create Agent</DialogTitle>
           <DialogDescription>
-            Define a new AI agent for your organisation.
+            Define a specialized AI agent with its own identity, skills, and LLM configuration.
           </DialogDescription>
         </DialogHeader>
 
@@ -126,6 +189,7 @@ export function CreateAgentDialog({ open, onClose }: Props) {
               <Check size={22} style={{ color: "var(--green)" }} />
             </div>
             <p className="text-sm font-medium text-foreground">Agent created!</p>
+            <p className="text-xs text-muted-foreground">The agent is now available in Communications.</p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
@@ -135,6 +199,7 @@ export function CreateAgentDialog({ open, onClose }: Props) {
               </p>
             )}
 
+            {/* Name + Role */}
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-muted-foreground">
@@ -143,7 +208,7 @@ export function CreateAgentDialog({ open, onClose }: Props) {
                 <input
                   className={field}
                   style={fieldStyle(errors.name)}
-                  placeholder="Research Agent"
+                  placeholder="Senior Full Stack Engineer"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   autoFocus
@@ -160,7 +225,7 @@ export function CreateAgentDialog({ open, onClose }: Props) {
                 <input
                   className={field}
                   style={fieldStyle(errors.role)}
-                  placeholder="Research Analyst"
+                  placeholder="Engineering Lead"
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
                 />
@@ -170,15 +235,16 @@ export function CreateAgentDialog({ open, onClose }: Props) {
               </div>
             </div>
 
+            {/* Goal */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-muted-foreground">
-                Goal <span style={{ color: "var(--red)" }}>*</span>
+                Purpose / Goal <span style={{ color: "var(--red)" }}>*</span>
               </label>
               <textarea
                 rows={2}
                 className="w-full resize-none rounded-lg border px-3 py-2 text-sm outline-none transition-colors"
                 style={fieldStyle(errors.goal)}
-                placeholder="What should this agent accomplish?"
+                placeholder="Design and build production-grade web applications with modern tooling."
                 value={goal}
                 onChange={(e) => setGoal(e.target.value)}
               />
@@ -187,15 +253,16 @@ export function CreateAgentDialog({ open, onClose }: Props) {
               )}
             </div>
 
+            {/* Instructions */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-muted-foreground">
                 Instructions <span style={{ color: "var(--red)" }}>*</span>
               </label>
               <textarea
-                rows={2}
+                rows={3}
                 className="w-full resize-none rounded-lg border px-3 py-2 text-sm outline-none transition-colors"
                 style={fieldStyle(errors.instructions)}
-                placeholder="How should this agent behave and operate?"
+                placeholder="Provide technical architecture guidance, code reviews, and implementation support. Always follow best practices for security, performance, and maintainability."
                 value={instructions}
                 onChange={(e) => setInstructions(e.target.value)}
               />
@@ -204,12 +271,98 @@ export function CreateAgentDialog({ open, onClose }: Props) {
               )}
             </div>
 
+            {/* Skills */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-muted-foreground">
+                Skills & Expertise
+                <span className="ml-1 font-normal text-muted-foreground/60">(press Enter or comma to add)</span>
+              </label>
+              <input
+                className={field}
+                style={fieldStyle()}
+                placeholder="React, Next.js, FastAPI, PostgreSQL…"
+                value={skillsInput}
+                onChange={(e) => setSkillsInput(e.target.value)}
+                onKeyDown={handleSkillKeyDown}
+                onBlur={() => skillsInput.trim() && addSkill(skillsInput)}
+              />
+              {skillTags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {skillTags.map((skill) => (
+                    <span
+                      key={skill}
+                      className="flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium"
+                      style={{ background: "var(--accent-glow)", color: "var(--purple)" }}
+                    >
+                      {skill}
+                      <button
+                        type="button"
+                        onClick={() => removeSkill(skill)}
+                        className="opacity-60 hover:opacity-100"
+                        aria-label={`Remove ${skill}`}
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Provider + Model */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-muted-foreground">LLM Provider</label>
+                <select
+                  className={field}
+                  style={selectStyle}
+                  value={provider}
+                  onChange={(e) => handleProviderChange(e.target.value)}
+                >
+                  {PROVIDERS.map((p) => (
+                    <option key={p.value} value={p.value}>{p.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Model</label>
+                {availableModels.length > 0 ? (
+                  <select
+                    className={field}
+                    style={selectStyle}
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  >
+                    <option value="">Select model…</option>
+                    {availableModels.map((m) => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    className={field}
+                    style={fieldStyle()}
+                    placeholder="e.g. gemini-2.5-flash"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Status + Manager */}
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-muted-foreground">Status</label>
-                <select className={field} style={selectStyle} value={status} onChange={(e) => setStatus(e.target.value)}>
-                  <option value="Created">Created</option>
+                <select
+                  className={field}
+                  style={selectStyle}
+                  value={agentStatus}
+                  onChange={(e) => setAgentStatus(e.target.value)}
+                >
                   <option value="Active">Active</option>
+                  <option value="Created">Created (not yet active)</option>
                   <option value="Paused">Paused</option>
                   <option value="Retired">Retired</option>
                 </select>
