@@ -1,6 +1,6 @@
 "use client";
 
-import { MoreVertical } from "lucide-react";
+import { ActionMenu } from "@/components/common/ActionMenu";
 import type { Agent } from "@/lib/types";
 
 interface AgentTableProps {
@@ -160,12 +160,16 @@ export function AgentTable({ agents }: AgentTableProps) {
 
                 {/* Actions */}
                 <td className="px-6 py-4 text-center">
-                  <button
-                    className="inline-flex items-center justify-center rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-[var(--border)] hover:text-foreground"
-                    aria-label={`Actions for ${agent.name}`}
-                  >
-                    <MoreVertical size={16} />
-                  </button>
+                  <ActionMenu
+                    label={`Actions for ${agent.name}`}
+                    onView={() => console.log("View", agent.id)}
+                    onEdit={() => console.log("Edit", agent.id)}
+                    onDuplicate={() => console.log("Duplicate", agent.id)}
+                    onActivate={agent.status !== "Active" ? () => console.log("Activate", agent.id) : undefined}
+                    onDeactivate={agent.status === "Active" ? () => console.log("Deactivate", agent.id) : undefined}
+                    onArchive={() => console.log("Archive", agent.id)}
+                    onDelete={() => console.log("Delete", agent.id)}
+                  />
                 </td>
               </tr>
             ))}
