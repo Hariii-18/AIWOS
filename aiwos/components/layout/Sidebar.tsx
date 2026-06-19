@@ -11,6 +11,7 @@ import {
   BookOpen,
   MessageCircle,
   BarChart2,
+  TrendingUp,
   Plug,
   Settings,
   MoreVertical,
@@ -33,6 +34,7 @@ const NAV = [
   {
     section: "Intelligence",
     items: [
+      { label: "Executive Overview", href: "/executive", icon: TrendingUp },
       { label: "Knowledge Base", href: "/knowledge", icon: BookOpen },
       { label: "Communications", href: "/chat", icon: MessageCircle },
       { label: "Analytics", href: "/analytics", icon: BarChart2 },

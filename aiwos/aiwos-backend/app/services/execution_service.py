@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
 _KNOWLEDGE_CHAR_LIMIT = 15_000  # ~3,750 tokens at 4 chars/token
+_HANDOFF_CHAR_LIMIT = 3_000
+
+_PHASE_ORDER = ["Research", "Design", "Development", "Testing", "Deployment"]
 
 
 def _extract_file_text(file_path: str, file_type: str) -> str:
@@ -78,6 +81,69 @@ async def _load_knowledge_context(
         total_chars += len(snippet)
 
     return "\n\n---\n\n".join(sections)
+
+
+async def _load_prior_phase_context(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    current_phase: str,
+) -> str:
+    """
+    For each phase that precedes current_phase, fetch the latest completed
+    execution output and return them formatted as a handoff context block.
+    Total output is capped at _HANDOFF_CHAR_LIMIT characters.
+    """
+    if current_phase not in _PHASE_ORDER:
+        return ""
+    prior_phases = _PHASE_ORDER[: _PHASE_ORDER.index(current_phase)]
+    if not prior_phases:
+        return ""
+
+    sections: list[str] = []
+    total_chars = 0
+
+    for phase in prior_phases:
+        if total_chars >= _HANDOFF_CHAR_LIMIT:
+            break
+
+        task_result = await db.execute(
+            select(Task.id).where(
+                Task.project_id == project_id,
+                Task.phase == phase,
+                Task.deleted_at.is_(None),
+            )
+        )
+        task_ids = [row[0] for row in task_result.all()]
+        if not task_ids:
+            continue
+
+        exec_result = await db.execute(
+            select(TaskExecution)
+            .where(
+                TaskExecution.task_id.in_(task_ids),
+                TaskExecution.status == "completed",
+                TaskExecution.deleted_at.is_(None),
+            )
+            .order_by(TaskExecution.completed_at.desc())
+            .limit(1)
+        )
+        execution = exec_result.scalar_one_or_none()
+        if execution is None:
+            continue
+
+        content = (execution.output_data or {}).get("content", "").strip()
+        if not content:
+            continue
+
+        budget = _HANDOFF_CHAR_LIMIT - total_chars
+        snippet = content[:budget]
+        sections.append(f"### {phase}\n\n{snippet}")
+        total_chars += len(snippet)
+
+    if not sections:
+        return ""
+
+    return "## Previous Team Deliverables\n\n" + "\n\n".join(sections)
 
 
 # Phase → deliverable-specific prompt guidance injected into every user prompt.
@@ -175,7 +241,12 @@ async def run_execution(db: AsyncSession, execution_id: uuid.UUID) -> TaskExecut
 
     system_prompt = _build_system_prompt(agent)
     knowledge_context = await _load_knowledge_context(db, task.organization_id)
-    user_prompt = _build_user_prompt(task, project, knowledge_context=knowledge_context)
+    prior_phase_context = await _load_prior_phase_context(db, task.project_id, task.phase or "")
+    user_prompt = _build_user_prompt(
+        task, project,
+        knowledge_context=knowledge_context,
+        prior_phase_context=prior_phase_context,
+    )
     execution.input_data = {"system_prompt": system_prompt, "user_prompt": user_prompt}
 
     persona_conduct = _detect_persona_conduct(agent)
@@ -371,7 +442,7 @@ async def _resolve_agent(
 
 
 def _build_user_prompt(
-    task: Task, project: Project, *, knowledge_context: str = ""
+    task: Task, project: Project, *, knowledge_context: str = "", prior_phase_context: str = ""
 ) -> str:
     lines: list[str] = [
         "You are executing a task and must produce a professional deliverable as your output.",
@@ -409,6 +480,19 @@ def _build_user_prompt(
             "Treat them as your primary reference when producing your deliverable.",
             "",
             knowledge_context,
+        ]
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ── Prior Phase Handoff ───────────────────────────────────────────────────
+    # Outputs from completed earlier phases are injected here so each specialist
+    # can build directly on prior team deliverables.
+    if prior_phase_context:
+        lines += [
+            "",
+            prior_phase_context,
+            "",
+            "Use the above deliverables as your primary input. "
+            "Do not repeat or summarise them — build on them.",
         ]
     # ─────────────────────────────────────────────────────────────────────────
 

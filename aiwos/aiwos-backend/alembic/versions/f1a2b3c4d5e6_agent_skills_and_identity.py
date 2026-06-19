@@ -18,10 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "agents",
-        sa.Column("skills", JSONB, nullable=False, server_default="[]"),
-    )
+    op.execute("ALTER TABLE agents ADD COLUMN IF NOT EXISTS skills JSONB NOT NULL DEFAULT '[]'")
 
 
 def downgrade() -> None:
