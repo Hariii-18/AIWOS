@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -10,6 +11,8 @@ from sqlalchemy.orm import selectinload
 from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate
 from app.services.task_assignment_service import assign_task
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.models.agent import Agent
@@ -31,12 +34,14 @@ def _find_agent_by_role(target_role: str, agents: "List[Agent]") -> "Optional[uu
     for agent in agents:
         if target_lower in (agent.role or "").lower():
             return agent.id
-    # Partial keyword match as fallback
-    keywords = [w for w in target_lower.split() if len(w) > 3]
-    for agent in agents:
-        role_lower = (agent.role or "").lower()
-        if any(kw in role_lower for kw in keywords):
-            return agent.id
+    # Partial keyword match: require ALL significant words to match (>= 2 chars)
+    # to prevent generic words like "engineer" from cross-matching roles.
+    keywords = [w for w in target_lower.split() if len(w) >= 2]
+    if keywords:
+        for agent in agents:
+            role_lower = (agent.role or "").lower()
+            if all(kw in role_lower for kw in keywords):
+                return agent.id
     return None
 
 
@@ -73,11 +78,28 @@ async def create_tasks_from_project(
             description = pt.get("description") or None
 
             assigned: Optional[uuid.UUID] = None
+            fallback_used = False
             if suggested_role and available_agents:
                 assigned = _find_agent_by_role(suggested_role, available_agents)
             if assigned is None:
                 assigned = assign_task(title, description, available_agents)
-            assigned = assigned or owner_agent_id
+            if assigned is None:
+                assigned = owner_agent_id
+                fallback_used = True
+
+            assigned_agent_name = next(
+                (a.name for a in available_agents if a.id == assigned), "None"
+            )
+            logger.debug(
+                "Task assignment | Project: %s | Task: %s | Phase: %s | "
+                "Expected Role: %s | Assigned Agent: %s | Fallback Used: %s",
+                project_id,
+                title,
+                phase or "None",
+                suggested_role or "None",
+                assigned_agent_name,
+                fallback_used,
+            )
 
             to_create.append(Task(
                 id=uuid.uuid4(),

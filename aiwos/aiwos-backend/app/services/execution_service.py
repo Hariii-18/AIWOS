@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import date, datetime, timezone
 from typing import List, Optional
@@ -11,10 +12,59 @@ from app.models.execution_log import ExecutionLog
 from app.models.project import Project
 from app.models.task import Task
 from app.models.task_execution import TaskExecution
-from app.services.conversation_service import _build_system_prompt
+from app.services.conversation_service import _build_system_prompt, _detect_persona_conduct
 from app.services.llm_provider_service import complete as llm_complete
 
+logger = logging.getLogger(__name__)
+
 _DEFAULT_MODEL = "gemini-2.5-flash"
+
+# Phase → deliverable-specific prompt guidance injected into every user prompt.
+_PHASE_DELIVERABLE_GUIDANCE: dict[str, str] = {
+    "Research": (
+        "Your deliverable must cover: requirements analysis, market and competitive research findings, "
+        "risk analysis, and stakeholder recommendations backed by evidence."
+    ),
+    "Design": (
+        "Your deliverable must cover: user flows (entry → action → confirmation → error → recovery), "
+        "UX recommendations with rationale, accessibility considerations (WCAG), and interface specifications."
+    ),
+    "Development": (
+        "Your deliverable must cover: system architecture and service boundaries, API contracts (endpoints, "
+        "schemas, SLAs), database design (models, indexes, migrations), and implementation approach with trade-offs."
+    ),
+    "Testing": (
+        "Your deliverable must cover: test strategy, test plan (scope, entry/exit criteria, test types), "
+        "test cases in Given-When-Then format, validation checklist, and defect scenarios. "
+        "Do NOT include system architecture discussions, frontend or backend technology recommendations, "
+        "or generic project planning sections."
+    ),
+    "Deployment": (
+        "Your deliverable must cover: infrastructure plan (environments, networking, access controls), "
+        "deployment architecture, CI/CD pipeline design (build, test gates, artifact management), "
+        "monitoring and alerting strategy, and rollback strategy with runbook steps. "
+        "Do NOT include system architecture discussions, frontend or backend technology recommendations, "
+        "or generic project planning sections."
+    ),
+}
+
+# Phase → required output sections that replace the generic document template.
+_PHASE_OUTPUT_SECTIONS: dict[str, list[str]] = {
+    "Testing": [
+        "## Test Strategy",
+        "## Test Plan",
+        "## Test Cases",
+        "## Validation Checklist",
+        "## Defect Scenarios",
+    ],
+    "Deployment": [
+        "## Infrastructure Plan",
+        "## Deployment Architecture",
+        "## CI/CD Pipeline",
+        "## Monitoring",
+        "## Rollback Strategy",
+    ],
+}
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -65,6 +115,16 @@ async def run_execution(db: AsyncSession, execution_id: uuid.UUID) -> TaskExecut
     system_prompt = _build_system_prompt(agent)
     user_prompt = _build_user_prompt(task, project)
     execution.input_data = {"system_prompt": system_prompt, "user_prompt": user_prompt}
+
+    persona_conduct = _detect_persona_conduct(agent)
+    persona_label = persona_conduct[0][:60] if persona_conduct else "DEFAULT"
+    logger.debug(
+        "Execution | Task: %s | Assigned Agent: %s (%s) | Persona Used: %s",
+        task.title,
+        agent.name,
+        agent.role,
+        persona_label,
+    )
 
     model = agent.model or _DEFAULT_MODEL
     started_at = execution.started_at
@@ -230,7 +290,11 @@ async def _resolve_agent(
     execution: TaskExecution,
     task: Task,
 ) -> Agent:
-    agent_id = execution.agent_id or task.assigned_to
+    # Prefer the specialist assigned to the task; only fall back to
+    # execution.agent_id (set from the request body) when no specialist exists.
+    # This prevents a project-owner agent passed via the API from silently
+    # overriding the assigned specialist's persona and model.
+    agent_id = task.assigned_to or execution.agent_id
     if agent_id is None:
         raise ValueError(
             f"No agent assigned to execution {execution.id} or task {task.id}."
@@ -258,27 +322,52 @@ def _build_user_prompt(task: Task, project: Project) -> str:
     ]
     if task.description:
         lines.append(f"**Task Description:** {task.description}")
-    lines += [
-        "",
-        "Produce a complete, professional deliverable in Markdown. Structure your output using exactly these sections:",
-        "",
-        "# [Deliverable Title — choose a specific, professional title]",
-        "",
-        "## Executive Summary",
-        "",
-        "## Analysis",
-        "",
-        "## Recommendations",
-        "",
-        "## Implementation Plan",
-        "",
-        "## Risks",
-        "",
-        "## Next Actions",
-        "",
-        "Adapt section headings and content to your professional role and the nature of this task. "
-        "Every section must contain substantive, expert-level content — not placeholder text.",
-    ]
+
+    # Inject phase-specific deliverable guidance so each specialist produces
+    # the correct artifact type rather than a generic document.
+    phase_guidance = _PHASE_DELIVERABLE_GUIDANCE.get(task.phase or "")
+    if phase_guidance:
+        lines += [
+            "",
+            f"**Deliverable Requirement ({task.phase} phase):** {phase_guidance}",
+        ]
+
+    phase_sections = _PHASE_OUTPUT_SECTIONS.get(task.phase or "")
+    if phase_sections:
+        section_block = "\n\n".join(phase_sections)
+        lines += [
+            "",
+            "Produce a complete, professional deliverable in Markdown using exactly these sections:",
+            "",
+            "# [Deliverable Title — choose a specific, professional title reflecting your role]",
+            "",
+            section_block,
+            "",
+            "Every section must contain substantive, expert-level content — not placeholder text. "
+            "Do not add sections outside this list.",
+        ]
+    else:
+        lines += [
+            "",
+            "Produce a complete, professional deliverable in Markdown. Structure your output using exactly these sections:",
+            "",
+            "# [Deliverable Title — choose a specific, professional title reflecting your role]",
+            "",
+            "## Executive Summary",
+            "",
+            "## Analysis",
+            "",
+            "## Recommendations",
+            "",
+            "## Implementation Plan",
+            "",
+            "## Risks",
+            "",
+            "## Next Actions",
+            "",
+            "Adapt section headings and content to your professional role and the nature of this task. "
+            "Every section must contain substantive, expert-level content — not placeholder text.",
+        ]
     return "\n".join(lines)
 
 

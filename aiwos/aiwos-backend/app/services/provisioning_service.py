@@ -195,6 +195,32 @@ _AGENTS = [
         "provider": "gemini",
         "model": "gemini-2.5-flash",
     },
+    {
+        "name": "QA Engineer",
+        "role": "QA Engineer",
+        "department": "Engineering",
+        "goal": "Ensure software quality through comprehensive testing, validation, and bug prevention.",
+        "instructions": (
+            "You are a QA engineer. Help with test planning, writing automated and manual "
+            "tests, bug reporting, regression testing, and quality assurance processes. "
+            "Cover unit, integration, end-to-end, performance, and smoke testing."
+        ),
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+    },
+    {
+        "name": "DevOps Engineer",
+        "role": "DevOps Engineer",
+        "department": "Engineering",
+        "goal": "Build and maintain CI/CD pipelines, cloud infrastructure, and deployment automation.",
+        "instructions": (
+            "You are a DevOps engineer. Help with CI/CD pipelines, Docker, Kubernetes, "
+            "cloud infrastructure (AWS/GCP/Azure), monitoring, alerting, and deployment "
+            "strategies. Focus on reliability, scalability, security, and automation."
+        ),
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+    },
 ]
 
 

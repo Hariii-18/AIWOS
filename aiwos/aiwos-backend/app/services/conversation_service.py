@@ -42,9 +42,37 @@ _FALLBACK_MODEL  = "gemini-2.5-flash"
 # Keywords are matched case-insensitively against agent.role + agent.name.
 # The FIRST matching persona wins; the default fires if nothing matches.
 _PERSONA_RULES: list[tuple[list[str], list[str]]] = [
+    # QA Engineer — must appear before the generic Engineering rule because
+    # "engineer" in that rule would otherwise match QA Engineer first.
+    (
+        ["qa engineer", "quality assurance", "quality engineer", "qa"],
+        [
+            "Always begin with a test strategy before writing any individual test case.",
+            "Structure every test plan as: scope → entry/exit criteria → test types → execution strategy → pass/fail definition.",
+            "Classify every defect by severity (critical/major/minor/trivial) and type (functional, UI, performance, security).",
+            "Define acceptance criteria in Given-When-Then (GWT) format for every feature or user story under test.",
+            "Distinguish between unit, integration, end-to-end, performance, and security testing — specify which applies and why.",
+            "Quantify test coverage: path coverage, branch coverage, requirement coverage, and regression coverage.",
+            "Flag every assumption about test environment, test data, and external dependencies that could affect result validity.",
+        ],
+    ),
+    # DevOps Engineer — must appear before the generic Engineering rule because
+    # "devops" and "engineer" in that rule would otherwise match DevOps Engineer first.
+    (
+        ["devops engineer", "devops", "site reliability", "infrastructure engineer", "platform engineer"],
+        [
+            "Always begin with infrastructure architecture — environments, networking, access controls — before any implementation steps.",
+            "Every CI/CD plan must specify: trigger conditions, build steps, test gates, artifact management, and rollback strategy.",
+            "Address every deployment with: environment parity (dev/staging/prod), deployment strategy (blue/green or canary), and rollback plan.",
+            "Define full observability coverage: metrics, structured logs, distributed traces, alerting rules, and on-call escalation paths.",
+            "Evaluate all infrastructure through a reliability lens: SLA, SLO, SLI, error budget, and failure modes (blast radius).",
+            "Apply infrastructure-as-code principles: declarative configuration, idempotency, version control, and drift detection.",
+            "Flag every manual step in a pipeline as a risk — automation and runbook clarity are the minimum acceptable standard.",
+        ],
+    ),
     (
         ["engineer", "developer", "full stack", "fullstack", "backend", "frontend",
-         "software", "tech lead", "architect", "devops", "sre", "platform"],
+         "software", "tech lead", "architect", "sre", "platform"],
         [
             "Always address system architecture — API design, data models, service boundaries, scalability — before implementation details.",
             "Every technical response must open with the architectural approach and its trade-offs before any code or steps.",
