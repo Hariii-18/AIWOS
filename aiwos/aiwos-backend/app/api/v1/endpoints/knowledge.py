@@ -1,13 +1,14 @@
 import uuid
 from typing import List
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.knowledge import KnowledgeFileResponse
+from app.schemas.knowledge import KnowledgeChunkSearchResult, KnowledgeFileResponse
+from app.services.knowledge_retrieval_service import search_knowledge
 from app.services.knowledge_service import (
     delete_knowledge_file,
     list_knowledge_files,
@@ -24,6 +25,35 @@ async def list_files(
     _: User = Depends(get_current_user),
 ) -> List:
     return await list_knowledge_files(db, organization_id)
+
+
+@router.get("/search", response_model=List[KnowledgeChunkSearchResult])
+async def search_files(
+    organization_id: uuid.UUID,
+    task_title: str,
+    task_description: str = Query(default=""),
+    agent_role: str = Query(default=""),
+    limit: int = Query(default=5, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> List:
+    """
+    Return the most relevant knowledge chunks for a given task context.
+    Useful for previewing which document sections an agent will reference.
+    """
+    chunks = await search_knowledge(
+        db, organization_id, task_title, task_description, agent_role, limit
+    )
+    return [
+        KnowledgeChunkSearchResult(
+            file_id=c.file_id,
+            file_name=c.file_name,
+            chunk_index=c.chunk_index,
+            content=c.content,
+            relevance_score=c.relevance_score,
+        )
+        for c in chunks
+    ]
 
 
 @router.post("/upload", response_model=KnowledgeFileResponse, status_code=status.HTTP_201_CREATED)

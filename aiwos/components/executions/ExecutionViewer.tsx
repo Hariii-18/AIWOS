@@ -15,8 +15,9 @@ import {
   ArrowLeftRight,
   ServerCrash,
   Ban,
+  BookOpen,
 } from "lucide-react";
-import { executionApi, type ExecutionApiResponse, type ExecutionErrorType } from "@/lib/api/executions";
+import { executionApi, type ExecutionApiResponse, type ExecutionErrorType, type KnowledgeChunkRef } from "@/lib/api/executions";
 
 interface ExecutionViewerProps {
   executionId: string;
@@ -152,6 +153,59 @@ function QuotaErrorPanel({ errorType }: { errorType: ExecutionErrorType | null |
   );
 }
 
+// ── Knowledge context panel ───────────────────────────────────────────────────
+
+function KnowledgeContextPanel({ chunks }: { chunks: KnowledgeChunkRef[] }) {
+  if (chunks.length === 0) return null;
+
+  // Deduplicate by file_name for the summary row, keep highest score per file
+  const byFile = new Map<string, KnowledgeChunkRef>();
+  for (const c of chunks) {
+    const existing = byFile.get(c.file_name);
+    if (!existing || c.relevance_score > existing.relevance_score) {
+      byFile.set(c.file_name, c);
+    }
+  }
+  const files = [...byFile.values()];
+
+  return (
+    <div className="mb-4 rounded-xl border border-[var(--border-light)] bg-[var(--surface)] p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <BookOpen size={14} className="shrink-0 text-muted-foreground" />
+        <span className="text-xs font-semibold text-foreground">
+          Knowledge Base Used
+        </span>
+        <span className="ml-auto rounded-full bg-[var(--border)] px-2 py-0.5 text-[10px] text-muted-foreground">
+          {chunks.length} chunk{chunks.length !== 1 ? "s" : ""} from {files.length} file{files.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {files.map((f) => (
+          <div key={f.file_id} className="flex items-center gap-3">
+            <span className="min-w-0 flex-1 truncate text-xs text-foreground" title={f.file_name}>
+              {f.file_name}
+            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              {/* Relevance bar */}
+              <div className="h-1.5 w-16 overflow-hidden rounded-full bg-[var(--border)]">
+                <div
+                  className="h-full rounded-full bg-[var(--cyan)]"
+                  style={{ width: `${Math.round(f.relevance_score * 100)}%` }}
+                />
+              </div>
+              <span className="w-8 text-right text-[10px] tabular-nums text-muted-foreground">
+                {f.relevance_score < 0.1
+                  ? "<10%"
+                  : `${Math.round(f.relevance_score * 100)}%`}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ExecutionViewer({ executionId, taskTitle, onClose }: ExecutionViewerProps) {
@@ -176,6 +230,10 @@ export function ExecutionViewer({ executionId, taskTitle, onClose }: ExecutionVi
   };
 
   const content = execution?.output_data?.content ?? null;
+  const knowledgeChunks: KnowledgeChunkRef[] =
+    execution?.knowledge_chunks_used ??
+    execution?.output_data?.knowledge_chunks_used ??
+    [];
 
   const errorType: ExecutionErrorType | null | undefined =
     execution?.error_type ?? execution?.output_data?.error_type;
@@ -293,6 +351,10 @@ export function ExecutionViewer({ executionId, taskTitle, onClose }: ExecutionVi
               <RefreshCw size={16} className="shrink-0" />
               Completed after {execution.retry_count} retr{execution.retry_count === 1 ? "y" : "ies"}.
             </div>
+          )}
+
+          {execution?.status === "completed" && knowledgeChunks.length > 0 && (
+            <KnowledgeContextPanel chunks={knowledgeChunks} />
           )}
 
           {content && (

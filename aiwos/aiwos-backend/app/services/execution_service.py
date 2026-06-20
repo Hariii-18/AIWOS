@@ -2,7 +2,6 @@ import asyncio
 import logging
 import uuid
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import List, Optional
 
 from sqlalchemy import select
@@ -11,11 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.agent import Agent
 from app.models.agent_metric import AgentMetric
 from app.models.execution_log import ExecutionLog
-from app.models.knowledge_file import KnowledgeFile
 from app.models.project import Project
 from app.models.task import Task
 from app.models.task_execution import TaskExecution
 from app.services.conversation_service import _build_system_prompt, _detect_persona_conduct
+from app.services.knowledge_retrieval_service import get_document_context
 from app.services.llm_provider_service import (
     LLMResponse,
     ProviderErrorType,
@@ -29,7 +28,6 @@ from app.services.llm_provider_service import (
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "gemini-2.5-flash"
-_KNOWLEDGE_CHAR_LIMIT = 15_000  # ~3,750 tokens at 4 chars/token
 _HANDOFF_CHAR_LIMIT = 3_000
 
 _PHASE_ORDER = ["Research", "Design", "Development", "Testing", "Deployment"]
@@ -46,63 +44,6 @@ class RetryExhaustedError(Exception):
         super().__init__(str(original))
         self.original = original
         self.retry_count = retry_count
-
-
-def _extract_file_text(file_path: str, file_type: str) -> str:
-    """Return plain text from a knowledge file on disk. Returns '' on any failure."""
-    path = Path(file_path)
-    if not path.exists():
-        return ""
-    try:
-        if file_type in ("txt", "md", "csv"):
-            return path.read_text(errors="replace")
-        if file_type == "pdf":
-            import pypdf  # already in requirements.txt
-            reader = pypdf.PdfReader(str(path))
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
-        if file_type == "docx":
-            import docx  # python-docx, already in requirements.txt
-            doc = docx.Document(str(path))
-            return "\n".join(p.text for p in doc.paragraphs)
-    except Exception:
-        pass
-    return ""
-
-
-async def _load_knowledge_context(
-    db: AsyncSession, organization_id: uuid.UUID
-) -> str:
-    """
-    Fetch all non-deleted knowledge files for the org, extract their text, and
-    return a single string capped at _KNOWLEDGE_CHAR_LIMIT characters.
-    Files are processed oldest-first so foundational documents appear first.
-    """
-    result = await db.execute(
-        select(KnowledgeFile)
-        .where(
-            KnowledgeFile.organization_id == organization_id,
-            KnowledgeFile.deleted_at.is_(None),
-        )
-        .order_by(KnowledgeFile.created_at.asc())
-    )
-    files = list(result.scalars().all())
-    if not files:
-        return ""
-
-    sections: list[str] = []
-    total_chars = 0
-    for kf in files:
-        if total_chars >= _KNOWLEDGE_CHAR_LIMIT:
-            break
-        text = _extract_file_text(kf.file_path, kf.file_type).strip()
-        if not text:
-            continue
-        budget = _KNOWLEDGE_CHAR_LIMIT - total_chars
-        snippet = text[:budget]
-        sections.append(f"### {kf.name}\n\n{snippet}")
-        total_chars += len(snippet)
-
-    return "\n\n---\n\n".join(sections)
 
 
 async def _load_prior_phase_context(
@@ -404,7 +345,13 @@ async def run_execution(db: AsyncSession, execution_id: uuid.UUID) -> TaskExecut
     await db.commit()
 
     system_prompt = _build_system_prompt(agent)
-    knowledge_context = await _load_knowledge_context(db, task.organization_id)
+    knowledge_context, knowledge_meta = await get_document_context(
+        db,
+        task.organization_id,
+        task_title=task.title,
+        task_description=task.description or "",
+        agent_role=agent.role or "",
+    )
     prior_phase_context = await _load_prior_phase_context(db, task.project_id, task.phase or "")
     user_prompt = _build_user_prompt(
         task, project,
@@ -505,6 +452,7 @@ async def run_execution(db: AsyncSession, execution_id: uuid.UUID) -> TaskExecut
         "content": llm_response.content,
         "provider_used": provider_used,
         "fallback_provider": fallback_from_provider,
+        "knowledge_chunks_used": knowledge_meta or [],
     }
     execution.token_count = llm_response.input_tokens + llm_response.output_tokens
     execution.cost = llm_response.cost

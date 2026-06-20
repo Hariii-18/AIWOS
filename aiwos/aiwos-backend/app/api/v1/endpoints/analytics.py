@@ -17,10 +17,13 @@ from app.models.user import User
 from app.models.workflow import Workflow
 from app.schemas.analytics import (
     ActivityItem,
+    AnalyticsMetricsResponse,
     DashboardResponse,
     DashboardStats,
     DepartmentStat,
+    DepartmentTaskStat,
     TopAgentStat,
+    TrendDataPoint,
     WeeklyCompletion,
 )
 
@@ -356,4 +359,526 @@ async def dashboard(
         recent_activities=recent_activities,
         top_agents=top_agents,
         weekly_completions=weekly_completions,
+    )
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _safe_pct_change(current: float, previous: float) -> float:
+    if previous == 0:
+        return 0.0
+    return round((current - previous) / previous * 100, 1)
+
+
+def _day_label(d: date) -> str:
+    return d.strftime("%b") + " " + str(d.day)
+
+
+def _month_label(d: date) -> str:
+    return d.strftime("%b %Y")
+
+
+def _month_start_ago(today: date, months: int) -> date:
+    year = today.year
+    month = today.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+    return date(year, month, 1)
+
+
+# ── Analytics Metrics endpoint ─────────────────────────────────────────────────
+
+@router.get("/metrics", response_model=AnalyticsMetricsResponse)
+async def analytics_metrics(
+    organization_id: uuid.UUID,
+    time_range: str = "7d",
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+) -> AnalyticsMetricsResponse:
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    current_period_start = now - timedelta(days=7)
+    previous_period_start = now - timedelta(days=14)
+
+    # ── Task counts ───────────────────────────────────────────────────────────
+    total_tasks = await db.scalar(
+        select(func.count()).where(
+            Task.organization_id == organization_id,
+            Task.deleted_at.is_(None),
+        )
+    ) or 0
+
+    completed_tasks = await db.scalar(
+        select(func.count()).where(
+            Task.organization_id == organization_id,
+            Task.status == "Done",
+            Task.deleted_at.is_(None),
+        )
+    ) or 0
+
+    in_progress_tasks = await db.scalar(
+        select(func.count()).where(
+            Task.organization_id == organization_id,
+            Task.status.in_(["In Progress", "In Review"]),
+            Task.deleted_at.is_(None),
+        )
+    ) or 0
+
+    pending_tasks = await db.scalar(
+        select(func.count()).where(
+            Task.organization_id == organization_id,
+            Task.status == "Todo",
+            Task.deleted_at.is_(None),
+        )
+    ) or 0
+
+    failed_tasks = await db.scalar(
+        select(func.count()).where(
+            Task.organization_id == organization_id,
+            Task.status == "Failed",
+            Task.deleted_at.is_(None),
+        )
+    ) or 0
+
+    completion_rate = round(
+        (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0.0, 1
+    )
+
+    # ── Execution counts ──────────────────────────────────────────────────────
+    total_executions = await db.scalar(
+        select(func.count()).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.deleted_at.is_(None),
+        )
+    ) or 0
+
+    successful_executions = await db.scalar(
+        select(func.count()).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.status == "completed",
+            TaskExecution.deleted_at.is_(None),
+        )
+    ) or 0
+
+    failed_executions = await db.scalar(
+        select(func.count()).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.status == "failed",
+            TaskExecution.deleted_at.is_(None),
+        )
+    ) or 0
+
+    retried_executions = await db.scalar(
+        select(func.count()).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.retry_count > 0,
+            TaskExecution.deleted_at.is_(None),
+        )
+    ) or 0
+
+    success_rate = round(
+        (successful_executions / total_executions * 100)
+        if total_executions > 0
+        else 0.0,
+        1,
+    )
+
+    # Average response time from the pre-computed execution_time_ms column
+    avg_time_ms = await db.scalar(
+        select(func.avg(TaskExecution.execution_time_ms)).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.status == "completed",
+            TaskExecution.execution_time_ms.is_not(None),
+            TaskExecution.deleted_at.is_(None),
+        )
+    )
+    avg_response_time_seconds = (
+        round(float(avg_time_ms) / 1000.0, 2) if avg_time_ms else 0.0
+    )
+
+    # ── Agent counts ──────────────────────────────────────────────────────────
+    total_agents = await db.scalar(
+        select(func.count()).where(
+            Agent.organization_id == organization_id,
+            Agent.deleted_at.is_(None),
+        )
+    ) or 0
+
+    active_agent_subq = (
+        select(TaskExecution.agent_id)
+        .where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.created_at >= current_period_start,
+            TaskExecution.agent_id.is_not(None),
+            TaskExecution.deleted_at.is_(None),
+        )
+        .distinct()
+        .subquery()
+    )
+    active_agents = await db.scalar(
+        select(func.count()).select_from(active_agent_subq)
+    ) or 0
+
+    # ── Workflow / project counts ─────────────────────────────────────────────
+    total_workflows = await db.scalar(
+        select(func.count()).where(
+            Workflow.organization_id == organization_id,
+            Workflow.deleted_at.is_(None),
+        )
+    ) or 0
+
+    total_projects = await db.scalar(
+        select(func.count()).where(
+            Project.organization_id == organization_id,
+            Project.deleted_at.is_(None),
+        )
+    ) or 0
+
+    active_projects = await db.scalar(
+        select(func.count()).where(
+            Project.organization_id == organization_id,
+            Project.status.in_(["active", "Active"]),
+            Project.deleted_at.is_(None),
+        )
+    ) or 0
+
+    completed_projects = await db.scalar(
+        select(func.count()).where(
+            Project.organization_id == organization_id,
+            Project.status.in_(["completed", "Completed"]),
+            Project.deleted_at.is_(None),
+        )
+    ) or 0
+
+    # ── Period-over-period % changes (current 7 days vs previous 7 days) ─────
+    tasks_current = await db.scalar(
+        select(func.count()).where(
+            Task.organization_id == organization_id,
+            Task.created_at >= current_period_start,
+            Task.deleted_at.is_(None),
+        )
+    ) or 0
+    tasks_previous = await db.scalar(
+        select(func.count()).where(
+            Task.organization_id == organization_id,
+            Task.created_at >= previous_period_start,
+            Task.created_at < current_period_start,
+            Task.deleted_at.is_(None),
+        )
+    ) or 0
+    tasks_change_pct = _safe_pct_change(tasks_current, tasks_previous)
+
+    completed_current = await db.scalar(
+        select(func.count()).where(
+            Task.organization_id == organization_id,
+            Task.status == "Done",
+            Task.updated_at >= current_period_start,
+            Task.deleted_at.is_(None),
+        )
+    ) or 0
+    completed_previous = await db.scalar(
+        select(func.count()).where(
+            Task.organization_id == organization_id,
+            Task.status == "Done",
+            Task.updated_at >= previous_period_start,
+            Task.updated_at < current_period_start,
+            Task.deleted_at.is_(None),
+        )
+    ) or 0
+    completed_change_pct = _safe_pct_change(completed_current, completed_previous)
+
+    exec_curr_total = await db.scalar(
+        select(func.count()).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.created_at >= current_period_start,
+            TaskExecution.deleted_at.is_(None),
+        )
+    ) or 0
+    exec_curr_success = await db.scalar(
+        select(func.count()).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.status == "completed",
+            TaskExecution.created_at >= current_period_start,
+            TaskExecution.deleted_at.is_(None),
+        )
+    ) or 0
+    exec_prev_total = await db.scalar(
+        select(func.count()).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.created_at >= previous_period_start,
+            TaskExecution.created_at < current_period_start,
+            TaskExecution.deleted_at.is_(None),
+        )
+    ) or 0
+    exec_prev_success = await db.scalar(
+        select(func.count()).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.status == "completed",
+            TaskExecution.created_at >= previous_period_start,
+            TaskExecution.created_at < current_period_start,
+            TaskExecution.deleted_at.is_(None),
+        )
+    ) or 0
+
+    curr_sr = (exec_curr_success / exec_curr_total * 100) if exec_curr_total > 0 else 0.0
+    prev_sr = (exec_prev_success / exec_prev_total * 100) if exec_prev_total > 0 else 0.0
+    success_rate_change_pct = _safe_pct_change(curr_sr, prev_sr)
+
+    avg_ms_curr = await db.scalar(
+        select(func.avg(TaskExecution.execution_time_ms)).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.status == "completed",
+            TaskExecution.execution_time_ms.is_not(None),
+            TaskExecution.created_at >= current_period_start,
+            TaskExecution.deleted_at.is_(None),
+        )
+    )
+    avg_ms_prev = await db.scalar(
+        select(func.avg(TaskExecution.execution_time_ms)).where(
+            TaskExecution.organization_id == organization_id,
+            TaskExecution.status == "completed",
+            TaskExecution.execution_time_ms.is_not(None),
+            TaskExecution.created_at >= previous_period_start,
+            TaskExecution.created_at < current_period_start,
+            TaskExecution.deleted_at.is_(None),
+        )
+    )
+    # Negative means response time improved (went down)
+    response_time_change_pct = _safe_pct_change(
+        float(avg_ms_curr or 0), float(avg_ms_prev or 0)
+    )
+
+    # ── Task completion trend ─────────────────────────────────────────────────
+    if time_range == "7d":
+        days_back = 7
+        start_dt = now - timedelta(days=days_back)
+
+        created_rows = await db.execute(
+            select(
+                func.date(Task.created_at).label("day"),
+                func.count().label("cnt"),
+            )
+            .where(
+                Task.organization_id == organization_id,
+                Task.created_at >= start_dt,
+                Task.deleted_at.is_(None),
+            )
+            .group_by(func.date(Task.created_at))
+        )
+        created_map: dict[date, int] = {r.day: int(r.cnt) for r in created_rows.all()}
+
+        done_rows = await db.execute(
+            select(
+                func.date(Task.updated_at).label("day"),
+                func.count().label("cnt"),
+            )
+            .where(
+                Task.organization_id == organization_id,
+                Task.status == "Done",
+                Task.updated_at >= start_dt,
+                Task.deleted_at.is_(None),
+            )
+            .group_by(func.date(Task.updated_at))
+        )
+        done_map: dict[date, int] = {r.day: int(r.cnt) for r in done_rows.all()}
+
+        task_completion_trend = [
+            TrendDataPoint(
+                date=_day_label(today - timedelta(days=i)),
+                created=created_map.get(today - timedelta(days=i), 0),
+                completed=done_map.get(today - timedelta(days=i), 0),
+            )
+            for i in range(days_back - 1, -1, -1)
+        ]
+
+    elif time_range == "30d":
+        start_dt = now - timedelta(days=30)
+
+        created_rows = await db.execute(
+            select(
+                func.date(Task.created_at).label("day"),
+                func.count().label("cnt"),
+            )
+            .where(
+                Task.organization_id == organization_id,
+                Task.created_at >= start_dt,
+                Task.deleted_at.is_(None),
+            )
+            .group_by(func.date(Task.created_at))
+        )
+        created_map = {r.day: int(r.cnt) for r in created_rows.all()}
+
+        done_rows = await db.execute(
+            select(
+                func.date(Task.updated_at).label("day"),
+                func.count().label("cnt"),
+            )
+            .where(
+                Task.organization_id == organization_id,
+                Task.status == "Done",
+                Task.updated_at >= start_dt,
+                Task.deleted_at.is_(None),
+            )
+            .group_by(func.date(Task.updated_at))
+        )
+        done_map = {r.day: int(r.cnt) for r in done_rows.all()}
+
+        # Produce one point per week (5 weeks)
+        task_completion_trend = []
+        for w in range(4, -1, -1):
+            week_end = today - timedelta(weeks=w)
+            week_start = week_end - timedelta(days=6)
+            label = _day_label(week_start)
+            task_completion_trend.append(TrendDataPoint(
+                date=label,
+                created=sum(
+                    created_map.get(week_start + timedelta(days=j), 0)
+                    for j in range(7)
+                ),
+                completed=sum(
+                    done_map.get(week_start + timedelta(days=j), 0)
+                    for j in range(7)
+                ),
+            ))
+
+    elif time_range == "90d":
+        start_dt = now - timedelta(days=91)
+
+        created_rows = await db.execute(
+            select(
+                func.date_trunc("week", Task.created_at).label("period"),
+                func.count().label("cnt"),
+            )
+            .where(
+                Task.organization_id == organization_id,
+                Task.created_at >= start_dt,
+                Task.deleted_at.is_(None),
+            )
+            .group_by(func.date_trunc("week", Task.created_at))
+        )
+        created_map = {r.period.date(): int(r.cnt) for r in created_rows.all()}
+
+        done_rows = await db.execute(
+            select(
+                func.date_trunc("week", Task.updated_at).label("period"),
+                func.count().label("cnt"),
+            )
+            .where(
+                Task.organization_id == organization_id,
+                Task.status == "Done",
+                Task.updated_at >= start_dt,
+                Task.deleted_at.is_(None),
+            )
+            .group_by(func.date_trunc("week", Task.updated_at))
+        )
+        done_map = {r.period.date(): int(r.cnt) for r in done_rows.all()}
+
+        task_completion_trend = []
+        for w in range(12, -1, -1):
+            week_end = today - timedelta(weeks=w)
+            week_start = week_end - timedelta(days=week_end.weekday())
+            label = _day_label(week_start)
+            task_completion_trend.append(TrendDataPoint(
+                date=label,
+                created=created_map.get(week_start, 0),
+                completed=done_map.get(week_start, 0),
+            ))
+
+    else:  # 1y
+        start_dt = now - timedelta(days=366)
+
+        created_rows = await db.execute(
+            select(
+                func.date_trunc("month", Task.created_at).label("period"),
+                func.count().label("cnt"),
+            )
+            .where(
+                Task.organization_id == organization_id,
+                Task.created_at >= start_dt,
+                Task.deleted_at.is_(None),
+            )
+            .group_by(func.date_trunc("month", Task.created_at))
+        )
+        created_map = {r.period.date(): int(r.cnt) for r in created_rows.all()}
+
+        done_rows = await db.execute(
+            select(
+                func.date_trunc("month", Task.updated_at).label("period"),
+                func.count().label("cnt"),
+            )
+            .where(
+                Task.organization_id == organization_id,
+                Task.status == "Done",
+                Task.updated_at >= start_dt,
+                Task.deleted_at.is_(None),
+            )
+            .group_by(func.date_trunc("month", Task.updated_at))
+        )
+        done_map = {r.period.date(): int(r.cnt) for r in done_rows.all()}
+
+        task_completion_trend = []
+        for m in range(11, -1, -1):
+            month_start = _month_start_ago(today, m)
+            label = _month_label(month_start)
+            task_completion_trend.append(TrendDataPoint(
+                date=label,
+                created=created_map.get(month_start, 0),
+                completed=done_map.get(month_start, 0),
+            ))
+
+    # ── Tasks by department ───────────────────────────────────────────────────
+    dept_rows = await db.execute(
+        select(
+            func.coalesce(Department.name, "Unassigned").label("dept_name"),
+            func.count(Task.id).label("task_count"),
+        )
+        .select_from(Task)
+        .outerjoin(Agent, Task.assigned_to == Agent.id)
+        .outerjoin(Department, Agent.department_id == Department.id)
+        .where(
+            Task.organization_id == organization_id,
+            Task.deleted_at.is_(None),
+        )
+        .group_by(func.coalesce(Department.name, "Unassigned"))
+        .order_by(func.count(Task.id).desc())
+    )
+    dept_task_rows = dept_rows.all()
+
+    dept_total = sum(r.task_count for r in dept_task_rows) or 1
+    tasks_by_department = [
+        DepartmentTaskStat(
+            department=r.dept_name,
+            tasks=int(r.task_count),
+            percentage=round(r.task_count / dept_total * 100, 1),
+        )
+        for r in dept_task_rows
+        if r.task_count > 0
+    ]
+
+    return AnalyticsMetricsResponse(
+        total_tasks=int(total_tasks),
+        completed_tasks=int(completed_tasks),
+        in_progress_tasks=int(in_progress_tasks),
+        pending_tasks=int(pending_tasks),
+        failed_tasks=int(failed_tasks),
+        completion_rate=completion_rate,
+        total_executions=int(total_executions),
+        successful_executions=int(successful_executions),
+        failed_executions=int(failed_executions),
+        retried_executions=int(retried_executions),
+        avg_response_time_seconds=avg_response_time_seconds,
+        success_rate=success_rate,
+        total_agents=int(total_agents),
+        active_agents=int(active_agents),
+        total_workflows=int(total_workflows),
+        total_projects=int(total_projects),
+        active_projects=int(active_projects),
+        completed_projects=int(completed_projects),
+        tasks_change_pct=tasks_change_pct,
+        completed_change_pct=completed_change_pct,
+        success_rate_change_pct=success_rate_change_pct,
+        response_time_change_pct=response_time_change_pct,
+        task_completion_trend=task_completion_trend,
+        tasks_by_department=tasks_by_department,
     )

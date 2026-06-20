@@ -7,6 +7,13 @@ export type ExecutionErrorType =
   | "auth_error"
   | "unknown";
 
+export type KnowledgeChunkRef = {
+  file_name: string;
+  file_id: string;
+  chunk_index: number;
+  relevance_score: number;
+};
+
 export type ExecutionApiResponse = {
   id: string;
   task_id: string;
@@ -20,6 +27,7 @@ export type ExecutionApiResponse = {
     provider_used?: string | null;
     fallback_provider?: string | null;
     error_type?: ExecutionErrorType | null;
+    knowledge_chunks_used?: KnowledgeChunkRef[] | null;
   } | null;
   error_message: string | null;
   token_count: number;
@@ -28,10 +36,11 @@ export type ExecutionApiResponse = {
   retry_count: number;
   created_at: string;
   updated_at: string;
-  // Provider tracking fields surfaced as top-level by the backend schema
+  // Fields surfaced as top-level by the backend schema validator
   provider_used?: string | null;
   fallback_provider?: string | null;
   error_type?: ExecutionErrorType | null;
+  knowledge_chunks_used?: KnowledgeChunkRef[] | null;
 };
 
 export type ExecuteTaskApiResponse = {
