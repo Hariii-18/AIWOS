@@ -19,6 +19,7 @@ import {
   Code2,
   TestTube2,
   Rocket,
+  GitBranch,
 } from "lucide-react";
 import { projectApi } from "@/lib/api/projects";
 import { taskApi, type TaskApiResponse } from "@/lib/api/tasks";
@@ -51,6 +52,20 @@ function formatRelative(iso: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function execStatusColor(status: string): string {
+  if (status === "completed") return "var(--green)";
+  if (status === "running") return "var(--cyan)";
+  if (status === "failed") return "var(--red)";
+  if (status === "pending") return "var(--amber)";
+  return "var(--faint)";
+}
+
+function latestFirst(execs: ExecutionApiResponse[]): ExecutionApiResponse[] {
+  return [...execs].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -115,12 +130,15 @@ function TaskRow({ task, executions, onExecute, onView, isExecuting }: TaskRowPr
 
       {latestExecution && (
         <span
-          className="shrink-0 hidden lg:flex items-center gap-1 text-[10px]"
+          className="shrink-0 hidden lg:flex items-center gap-1.5 text-[10px]"
           style={{ color: "var(--muted-foreground)" }}
         >
           <Zap size={9} style={{ color: "var(--purple)" }} />
           {executions.length} run{executions.length !== 1 ? "s" : ""} ·{" "}
-          {formatRelative(latestExecution.created_at)}
+          {formatRelative(latestExecution.created_at)} ·{" "}
+          <span style={{ color: execStatusColor(latestExecution.status) }}>
+            {latestExecution.status}
+          </span>
         </span>
       )}
 
@@ -863,6 +881,164 @@ export default function ProjectDetailPage() {
               <span className="inline-block h-2 w-2 rounded-sm" style={{ background: "var(--border)" }} />
               Not Started
             </span>
+          </div>
+        </div>
+      )}
+
+      {/* Agent Collaboration Timeline */}
+      {!tasksPending && agentStats.length > 0 && (
+        <div
+          className="mb-6 rounded-xl border overflow-hidden"
+          style={{ background: "var(--card)", borderColor: "var(--border-light)" }}
+        >
+          <div
+            className="flex items-center gap-2 px-4 py-3"
+            style={{ borderBottom: "1px solid var(--border-light)", background: "var(--surface)" }}
+          >
+            <GitBranch size={14} style={{ color: "var(--purple)" }} />
+            <span className="text-sm font-semibold text-foreground">Agent Collaboration Timeline</span>
+          </div>
+
+          <div className="p-4 relative flex flex-col gap-3">
+            {/* Vertical connector line */}
+            <div
+              className="absolute top-8 bottom-8"
+              style={{ left: "2rem", width: "1px", background: "var(--border-light)" }}
+            />
+
+            {agentStats.map((stat) => (
+              <div key={stat.id} className="relative flex items-center gap-3">
+                {/* Avatar dot on the timeline */}
+                <div
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white z-10"
+                  style={{ background: "var(--purple)" }}
+                >
+                  {stat.name.charAt(0).toUpperCase()}
+                </div>
+
+                {/* Card */}
+                <div
+                  className="flex flex-1 min-w-0 items-center gap-3 rounded-lg border px-3 py-2.5"
+                  style={{ background: "var(--elevated)", borderColor: "var(--border-light)" }}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate text-sm font-semibold text-foreground">{stat.name}</p>
+                    <p className="truncate text-[10px]" style={{ color: "var(--muted-foreground)" }}>
+                      {stat.role}
+                    </p>
+                  </div>
+                  <div className="shrink-0 flex items-center gap-1.5">
+                    <span
+                      className="rounded-md px-2 py-0.5 text-[10px] font-medium"
+                      style={{ background: "rgba(16,185,129,0.12)", color: "var(--green)" }}
+                    >
+                      {stat.completed} Done
+                    </span>
+                    <span
+                      className="rounded-md px-2 py-0.5 text-[10px] font-medium"
+                      style={{ background: "rgba(6,182,212,0.12)", color: "var(--cyan)" }}
+                    >
+                      {stat.inProgress} Active
+                    </span>
+                    <span
+                      className="rounded-md px-2 py-0.5 text-[10px] font-medium"
+                      style={{ background: "var(--border)", color: "var(--muted-foreground)" }}
+                    >
+                      {stat.notStarted} Pending
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Execution History */}
+      {!tasksPending && totalRuns > 0 && (
+        <div
+          className="mb-6 rounded-xl border overflow-hidden"
+          style={{ background: "var(--card)", borderColor: "var(--border-light)" }}
+        >
+          <div
+            className="flex items-center gap-2 px-4 py-3"
+            style={{ borderBottom: "1px solid var(--border-light)", background: "var(--surface)" }}
+          >
+            <Zap size={14} style={{ color: "var(--purple)" }} />
+            <span className="text-sm font-semibold text-foreground">Execution History</span>
+            <span
+              className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold"
+              style={{ background: "var(--elevated)", color: "var(--muted-foreground)" }}
+            >
+              {totalRuns} total
+            </span>
+          </div>
+
+          {/* Column headers */}
+          <div
+            className="grid px-4 py-2 text-[10px] font-semibold uppercase tracking-wide"
+            style={{
+              gridTemplateColumns: "1fr 120px 48px 80px 72px",
+              color: "var(--muted-foreground)",
+              borderBottom: "1px solid var(--border-light)",
+              background: "var(--elevated)",
+            }}
+          >
+            <span>Task</span>
+            <span>Agent</span>
+            <span className="text-center">Runs</span>
+            <span className="text-right">Last Run</span>
+            <span className="text-right">Status</span>
+          </div>
+
+          <div>
+            {tasks
+              .filter((t) => (executionsByTask.data?.[t.id]?.length ?? 0) > 0)
+              .map((task) => {
+                const execs = latestFirst(executionsByTask.data![task.id]);
+                const latest = execs[0];
+                return (
+                  <div
+                    key={task.id}
+                    className="grid items-center px-4 py-2.5 text-xs"
+                    style={{
+                      gridTemplateColumns: "1fr 120px 48px 80px 72px",
+                      borderBottom: "1px solid var(--border-light)",
+                    }}
+                  >
+                    <span
+                      className="truncate font-medium pr-3"
+                      style={{ color: "var(--foreground)" }}
+                    >
+                      {task.title}
+                    </span>
+                    <span
+                      className="truncate pr-3"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {task.assigned_agent?.name ?? "—"}
+                    </span>
+                    <span
+                      className="text-center font-semibold tabular-nums"
+                      style={{ color: "var(--foreground)" }}
+                    >
+                      {execs.length}
+                    </span>
+                    <span
+                      className="text-right tabular-nums"
+                      style={{ color: "var(--muted-foreground)" }}
+                    >
+                      {formatRelative(latest.created_at)}
+                    </span>
+                    <span
+                      className="text-right font-semibold capitalize"
+                      style={{ color: execStatusColor(latest.status) }}
+                    >
+                      {latest.status}
+                    </span>
+                  </div>
+                );
+              })}
           </div>
         </div>
       )}

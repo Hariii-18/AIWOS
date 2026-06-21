@@ -11,6 +11,7 @@ import {
   BookOpen,
   MessageCircle,
   BarChart2,
+  TrendingUp,
   Plug,
   Settings,
   MoreVertical,
@@ -33,6 +34,7 @@ const NAV = [
   {
     section: "Intelligence",
     items: [
+      { label: "Executive Overview", href: "/executive", icon: TrendingUp },
       { label: "Knowledge Base", href: "/knowledge", icon: BookOpen },
       { label: "Communications", href: "/chat", icon: MessageCircle },
       { label: "Analytics", href: "/analytics", icon: BarChart2 },
@@ -47,7 +49,12 @@ const NAV = [
   },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  isMobile?: boolean;
+  onNavClick?: () => void;
+}
+
+export function Sidebar({ isMobile, onNavClick }: SidebarProps = {}) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, signOut } = useAuthStore();
@@ -59,7 +66,11 @@ export function Sidebar() {
 
   return (
     <aside
-      className="hidden h-full w-[220px] min-w-[220px] flex-col overflow-hidden md:flex"
+      className={
+        isMobile
+          ? "flex h-full w-[220px] min-w-[220px] flex-col overflow-hidden"
+          : "hidden h-full w-[220px] min-w-[220px] flex-col overflow-hidden lg:flex"
+      }
       style={{ background: "var(--surface)", borderRight: "1px solid var(--border-light)" }}
     >
       {/* Logo */}
@@ -100,6 +111,7 @@ export function Sidebar() {
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={onNavClick}
                   className={cn(
                     "relative mb-0.5 flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13px] font-normal transition-all",
                     isActive

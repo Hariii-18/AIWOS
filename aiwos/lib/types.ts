@@ -13,8 +13,8 @@ export type NavSection = {
 export type StatCard = {
   label: string;
   value: string;
-  delta: string;
-  deltaType: "up" | "down";
+  delta?: string;
+  deltaType?: "up" | "down";
   icon: string;
   color: string;
   bgColor: string;
@@ -39,6 +39,8 @@ export type Agent = {
   performance: number;
   avatarColor: string;
   initials: string;
+  provider: string | null;
+  model: string | null;
 };
 
 export type Activity = {

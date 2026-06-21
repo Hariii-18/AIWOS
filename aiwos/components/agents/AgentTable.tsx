@@ -1,6 +1,6 @@
 "use client";
 
-import { MoreVertical } from "lucide-react";
+import { ActionMenu } from "@/components/common/ActionMenu";
 import type { Agent } from "@/lib/types";
 
 interface AgentTableProps {
@@ -43,6 +43,28 @@ function StatusBadge({ status }: { status: "Active" | "Idle" | "Paused" }) {
   );
 }
 
+const PROVIDER_META: Record<string, { label: string; bg: string; color: string }> = {
+  openai:    { label: "OpenAI",     bg: "rgba(16,163,127,0.12)",  color: "#10a37f" },
+  google:    { label: "Google",     bg: "rgba(66,133,244,0.12)",  color: "#4285f4" },
+  gemini:    { label: "Gemini",     bg: "rgba(66,133,244,0.12)",  color: "#4285f4" },
+  anthropic: { label: "Anthropic",  bg: "rgba(124,58,237,0.12)", color: "#7c3aed" },
+};
+
+function ProviderBadge({ provider }: { provider: string | null }) {
+  if (!provider) return null;
+  const meta = PROVIDER_META[provider.toLowerCase()];
+  if (!meta) return null;
+
+  return (
+    <span
+      className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold"
+      style={{ background: meta.bg, color: meta.color }}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
 export function AgentTable({ agents }: AgentTableProps) {
   return (
     <div
@@ -65,7 +87,10 @@ export function AgentTable({ agents }: AgentTableProps) {
                 Agent Name
               </th>
               <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground">
-                Role
+                Role / Model
+              </th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground">
+                Provider
               </th>
               <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-muted-foreground">
                 Department
@@ -111,11 +136,21 @@ export function AgentTable({ agents }: AgentTableProps) {
                   </div>
                 </td>
 
-                {/* Role */}
+                {/* Role / Model */}
                 <td className="px-6 py-4">
-                  <span className="text-sm text-muted-foreground">
-                    {agent.role}
-                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm text-muted-foreground">{agent.role}</span>
+                    {agent.model && (
+                      <span className="text-xs text-muted-foreground/60 font-mono">
+                        {agent.model}
+                      </span>
+                    )}
+                  </div>
+                </td>
+
+                {/* Provider */}
+                <td className="px-6 py-4">
+                  <ProviderBadge provider={agent.provider} />
                 </td>
 
                 {/* Department */}
@@ -160,12 +195,16 @@ export function AgentTable({ agents }: AgentTableProps) {
 
                 {/* Actions */}
                 <td className="px-6 py-4 text-center">
-                  <button
-                    className="inline-flex items-center justify-center rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-[var(--border)] hover:text-foreground"
-                    aria-label={`Actions for ${agent.name}`}
-                  >
-                    <MoreVertical size={16} />
-                  </button>
+                  <ActionMenu
+                    label={`Actions for ${agent.name}`}
+                    onView={() => console.log("View", agent.id)}
+                    onEdit={() => console.log("Edit", agent.id)}
+                    onDuplicate={() => console.log("Duplicate", agent.id)}
+                    onActivate={agent.status !== "Active" ? () => console.log("Activate", agent.id) : undefined}
+                    onDeactivate={agent.status === "Active" ? () => console.log("Deactivate", agent.id) : undefined}
+                    onArchive={() => console.log("Archive", agent.id)}
+                    onDelete={() => console.log("Delete", agent.id)}
+                  />
                 </td>
               </tr>
             ))}

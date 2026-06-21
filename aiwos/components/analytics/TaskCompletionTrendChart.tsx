@@ -1,12 +1,26 @@
-import type { CompletionTrendData } from "@/lib/data/analytics";
+import type { TrendDataPoint } from "@/lib/api/analytics";
 
 interface TaskCompletionTrendChartProps {
-  data: CompletionTrendData[];
+  data: TrendDataPoint[];
+  isLoading?: boolean;
 }
 
 export function TaskCompletionTrendChart({
   data,
+  isLoading,
 }: TaskCompletionTrendChartProps) {
+  if (isLoading) {
+    return (
+      <div
+        className="rounded-lg border p-6 min-h-[300px] animate-pulse"
+        style={{
+          background: "var(--card)",
+          borderColor: "var(--border-light)",
+        }}
+      />
+    );
+  }
+
   if (!data || data.length === 0) {
     return (
       <div
@@ -16,35 +30,27 @@ export function TaskCompletionTrendChart({
           borderColor: "var(--border-light)",
         }}
       >
-        <p className="text-sm text-muted-foreground">No data available</p>
+        <p className="text-sm text-muted-foreground">No trend data available</p>
       </div>
     );
   }
 
-  const maxTotal = Math.max(...data.map((d) => d.total));
+  const maxValue = Math.max(...data.flatMap((d) => [d.created, d.completed]), 1);
   const chartHeight = 200;
   const chartWidth = 600;
   const padding = 40;
 
-  const pointsCompleted = data.map((d, i) => {
-    const x = (i / (data.length - 1 || 1)) * (chartWidth - padding * 2) + padding;
-    const y = chartHeight - (d.completed / maxTotal) * (chartHeight - padding) + 20;
-    return { x, y, value: d.completed };
+  const toPoint = (value: number, index: number) => ({
+    x: (index / (data.length - 1 || 1)) * (chartWidth - padding * 2) + padding,
+    y: chartHeight - (value / maxValue) * (chartHeight - padding) + 20,
+    value,
   });
 
-  const pointsTotal = data.map((d, i) => {
-    const x = (i / (data.length - 1 || 1)) * (chartWidth - padding * 2) + padding;
-    const y = chartHeight - (d.total / maxTotal) * (chartHeight - padding) + 20;
-    return { x, y, value: d.total };
-  });
+  const pointsCreated = data.map((d, i) => toPoint(d.created, i));
+  const pointsCompleted = data.map((d, i) => toPoint(d.completed, i));
 
-  const pathCompleted = pointsCompleted
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-    .join(" ");
-
-  const pathTotal = pointsTotal
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-    .join(" ");
+  const buildPath = (points: { x: number; y: number }[]) =>
+    points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
 
   return (
     <div
@@ -77,27 +83,28 @@ export function TaskCompletionTrendChart({
             />
           ))}
 
-          {/* Total line */}
+          {/* Created line (dashed, muted) */}
           <path
-            d={pathTotal}
+            d={buildPath(pointsCreated)}
             fill="none"
             stroke="var(--muted-foreground)"
             strokeWidth="2"
-            opacity="0.5"
+            strokeDasharray="5 3"
+            opacity="0.6"
           />
 
           {/* Completed line */}
           <path
-            d={pathCompleted}
+            d={buildPath(pointsCompleted)}
             fill="none"
             stroke="var(--cyan)"
             strokeWidth="3"
           />
 
-          {/* Points for completed */}
+          {/* Dots for completed */}
           {pointsCompleted.map((p, i) => (
             <circle
-              key={`completed-${i}`}
+              key={`c-${i}`}
               cx={p.x}
               cy={p.y}
               r="4"
@@ -108,14 +115,14 @@ export function TaskCompletionTrendChart({
           {/* X-axis labels */}
           {data.map((d, i) => (
             <text
-              key={`label-${i}`}
+              key={`lx-${i}`}
               x={
                 (i / (data.length - 1 || 1)) * (chartWidth - padding * 2) +
                 padding
               }
               y={chartHeight + 35}
               textAnchor="middle"
-              fontSize="12"
+              fontSize="11"
               fill="var(--muted-foreground)"
             >
               {d.date}
@@ -125,14 +132,14 @@ export function TaskCompletionTrendChart({
           {/* Y-axis labels */}
           {[0, 1, 2, 3, 4].map((i) => (
             <text
-              key={`y-label-${i}`}
+              key={`ly-${i}`}
               x={padding - 10}
               y={20 + (i * (chartHeight - padding)) / 4 + 4}
               textAnchor="end"
-              fontSize="12"
+              fontSize="11"
               fill="var(--muted-foreground)"
             >
-              {Math.round(maxTotal - (maxTotal * i) / 4)}
+              {Math.round(maxValue - (maxValue * i) / 4)}
             </text>
           ))}
         </svg>
@@ -148,10 +155,14 @@ export function TaskCompletionTrendChart({
           </div>
           <div className="flex items-center gap-2">
             <div
-              className="h-2 w-6 rounded"
-              style={{ background: "var(--muted-foreground)", opacity: 0.5 }}
+              className="h-px w-6"
+              style={{
+                background: "var(--muted-foreground)",
+                opacity: 0.6,
+                borderTop: "2px dashed var(--muted-foreground)",
+              }}
             />
-            <span className="text-xs text-muted-foreground">Total</span>
+            <span className="text-xs text-muted-foreground">Created</span>
           </div>
         </div>
       </div>

@@ -1,5 +1,25 @@
 import { apiClient } from "./client";
 
+export type ExecutionErrorType =
+  | "quota_exceeded"
+  | "rate_limited"
+  | "service_unavailable"
+  | "auth_error"
+  | "unknown";
+
+export type KnowledgeChunkRef = {
+  file_name: string;
+  file_id: string;
+  chunk_index: number;
+  relevance_score: number;
+};
+
+export type DependencyRef = {
+  execution_id: string;
+  task_title: string;
+  task_phase: string | null;
+};
+
 export type ExecutionApiResponse = {
   id: string;
   task_id: string;
@@ -8,7 +28,17 @@ export type ExecutionApiResponse = {
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   started_at: string | null;
   completed_at: string | null;
-  output_data: { content?: string } | null;
+  output_data: {
+    content?: string;
+    provider_used?: string | null;
+    fallback_provider?: string | null;
+    error_type?: ExecutionErrorType | null;
+    knowledge_chunks_used?: KnowledgeChunkRef[] | null;
+    dependency_ids?: string[] | null;
+    dependency_count?: number | null;
+    dependency_context_used?: boolean | null;
+    dependencies_used?: DependencyRef[] | null;
+  } | null;
   error_message: string | null;
   token_count: number;
   cost: number;
@@ -16,6 +46,15 @@ export type ExecutionApiResponse = {
   retry_count: number;
   created_at: string;
   updated_at: string;
+  // Fields surfaced as top-level by the backend schema validator
+  provider_used?: string | null;
+  fallback_provider?: string | null;
+  error_type?: ExecutionErrorType | null;
+  knowledge_chunks_used?: KnowledgeChunkRef[] | null;
+  dependency_ids?: string[] | null;
+  dependency_count?: number | null;
+  dependency_context_used?: boolean | null;
+  dependencies_used?: DependencyRef[] | null;
 };
 
 export type ExecuteTaskApiResponse = {

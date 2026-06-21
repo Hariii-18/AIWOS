@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints.agents import router as agents_router
+from app.api.v1.endpoints.analytics import router as analytics_router
 from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.conversations import router as conversations_router
 from app.api.v1.endpoints.departments import router as departments_router
@@ -22,3 +23,4 @@ api_router.include_router(workflows_router)
 api_router.include_router(executions_router)
 api_router.include_router(conversations_router)
 api_router.include_router(knowledge_router)
+api_router.include_router(analytics_router)
