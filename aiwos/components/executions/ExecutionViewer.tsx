@@ -16,8 +16,9 @@ import {
   ServerCrash,
   Ban,
   BookOpen,
+  Link2,
 } from "lucide-react";
-import { executionApi, type ExecutionApiResponse, type ExecutionErrorType, type KnowledgeChunkRef } from "@/lib/api/executions";
+import { executionApi, type ExecutionApiResponse, type ExecutionErrorType, type KnowledgeChunkRef, type DependencyRef } from "@/lib/api/executions";
 
 interface ExecutionViewerProps {
   executionId: string;
@@ -206,6 +207,44 @@ function KnowledgeContextPanel({ chunks }: { chunks: KnowledgeChunkRef[] }) {
   );
 }
 
+// ── Dependencies used panel ───────────────────────────────────────────────────
+
+function DependenciesUsedPanel({ deps }: { deps: DependencyRef[] }) {
+  if (deps.length === 0) return null;
+
+  return (
+    <div className="mb-4 rounded-xl border border-[var(--border-light)] bg-[var(--surface)] p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Link2 size={14} className="shrink-0 text-muted-foreground" />
+        <span className="text-xs font-semibold text-foreground">Dependencies Used</span>
+        <span className="ml-auto rounded-full bg-[var(--border)] px-2 py-0.5 text-[10px] text-muted-foreground">
+          {deps.length} deliverable{deps.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {deps.map((d) => (
+          <div key={d.execution_id} className="flex items-center gap-3">
+            <span
+              className="min-w-0 flex-1 truncate text-xs text-foreground"
+              title={d.task_title}
+            >
+              {d.task_title}
+            </span>
+            {d.task_phase && (
+              <span className="shrink-0 rounded bg-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {d.task_phase}
+              </span>
+            )}
+            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+              #{d.execution_id.slice(0, 8)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ExecutionViewer({ executionId, taskTitle, onClose }: ExecutionViewerProps) {
@@ -233,6 +272,10 @@ export function ExecutionViewer({ executionId, taskTitle, onClose }: ExecutionVi
   const knowledgeChunks: KnowledgeChunkRef[] =
     execution?.knowledge_chunks_used ??
     execution?.output_data?.knowledge_chunks_used ??
+    [];
+  const dependenciesUsed: DependencyRef[] =
+    execution?.dependencies_used ??
+    execution?.output_data?.dependencies_used ??
     [];
 
   const errorType: ExecutionErrorType | null | undefined =
@@ -355,6 +398,10 @@ export function ExecutionViewer({ executionId, taskTitle, onClose }: ExecutionVi
 
           {execution?.status === "completed" && knowledgeChunks.length > 0 && (
             <KnowledgeContextPanel chunks={knowledgeChunks} />
+          )}
+
+          {execution?.status === "completed" && dependenciesUsed.length > 0 && (
+            <DependenciesUsedPanel deps={dependenciesUsed} />
           )}
 
           {content && (

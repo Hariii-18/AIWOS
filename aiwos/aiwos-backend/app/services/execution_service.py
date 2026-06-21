@@ -50,19 +50,23 @@ async def _load_prior_phase_context(
     db: AsyncSession,
     project_id: uuid.UUID,
     current_phase: str,
-) -> str:
+) -> tuple[str, list[dict]]:
     """
     For each phase that precedes current_phase, fetch the latest completed
     execution output and return them formatted as a handoff context block.
     Total output is capped at _HANDOFF_CHAR_LIMIT characters.
+
+    Returns (context_str, dep_refs) where dep_refs contains metadata about
+    each dependency: execution_id, task_title, task_phase.
     """
     if current_phase not in _PHASE_ORDER:
-        return ""
+        return "", []
     prior_phases = _PHASE_ORDER[: _PHASE_ORDER.index(current_phase)]
     if not prior_phases:
-        return ""
+        return "", []
 
     sections: list[str] = []
+    dep_refs: list[dict] = []
     total_chars = 0
 
     for phase in prior_phases:
@@ -70,13 +74,15 @@ async def _load_prior_phase_context(
             break
 
         task_result = await db.execute(
-            select(Task.id).where(
+            select(Task.id, Task.title).where(
                 Task.project_id == project_id,
                 Task.phase == phase,
                 Task.deleted_at.is_(None),
             )
         )
-        task_ids = [row[0] for row in task_result.all()]
+        task_rows = task_result.all()
+        task_ids = [row[0] for row in task_rows]
+        task_titles = {row[0]: row[1] for row in task_rows}
         if not task_ids:
             continue
 
@@ -103,10 +109,16 @@ async def _load_prior_phase_context(
         sections.append(f"### {phase}\n\n{snippet}")
         total_chars += len(snippet)
 
-    if not sections:
-        return ""
+        dep_refs.append({
+            "execution_id": str(execution.id),
+            "task_title": task_titles.get(execution.task_id, f"{phase} Task"),
+            "task_phase": phase,
+        })
 
-    return "## Previous Team Deliverables\n\n" + "\n\n".join(sections)
+    if not sections:
+        return "", []
+
+    return "## Previous Team Deliverables\n\n" + "\n\n".join(sections), dep_refs
 
 
 # Phase → deliverable-specific prompt guidance injected into every user prompt.
@@ -352,7 +364,7 @@ async def run_execution(db: AsyncSession, execution_id: uuid.UUID) -> TaskExecut
         task_description=task.description or "",
         agent_role=agent.role or "",
     )
-    prior_phase_context = await _load_prior_phase_context(db, task.project_id, task.phase or "")
+    prior_phase_context, dep_refs = await _load_prior_phase_context(db, task.project_id, task.phase or "")
     user_prompt = _build_user_prompt(
         task, project,
         knowledge_context=knowledge_context,
@@ -420,6 +432,10 @@ async def run_execution(db: AsyncSession, execution_id: uuid.UUID) -> TaskExecut
         execution.output_data = {
             "provider_used": provider_used,
             "error_type": error_type_str or "unknown",
+            "dependency_ids": [d["execution_id"] for d in dep_refs],
+            "dependency_count": len(dep_refs),
+            "dependency_context_used": bool(dep_refs),
+            "dependencies_used": dep_refs,
         }
 
         await db.commit()
@@ -453,6 +469,10 @@ async def run_execution(db: AsyncSession, execution_id: uuid.UUID) -> TaskExecut
         "provider_used": provider_used,
         "fallback_provider": fallback_from_provider,
         "knowledge_chunks_used": knowledge_meta or [],
+        "dependency_ids": [d["execution_id"] for d in dep_refs],
+        "dependency_count": len(dep_refs),
+        "dependency_context_used": bool(dep_refs),
+        "dependencies_used": dep_refs,
     }
     execution.token_count = llm_response.input_tokens + llm_response.output_tokens
     execution.cost = llm_response.cost

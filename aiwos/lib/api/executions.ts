@@ -14,6 +14,12 @@ export type KnowledgeChunkRef = {
   relevance_score: number;
 };
 
+export type DependencyRef = {
+  execution_id: string;
+  task_title: string;
+  task_phase: string | null;
+};
+
 export type ExecutionApiResponse = {
   id: string;
   task_id: string;
@@ -28,6 +34,10 @@ export type ExecutionApiResponse = {
     fallback_provider?: string | null;
     error_type?: ExecutionErrorType | null;
     knowledge_chunks_used?: KnowledgeChunkRef[] | null;
+    dependency_ids?: string[] | null;
+    dependency_count?: number | null;
+    dependency_context_used?: boolean | null;
+    dependencies_used?: DependencyRef[] | null;
   } | null;
   error_message: string | null;
   token_count: number;
@@ -41,6 +51,10 @@ export type ExecutionApiResponse = {
   fallback_provider?: string | null;
   error_type?: ExecutionErrorType | null;
   knowledge_chunks_used?: KnowledgeChunkRef[] | null;
+  dependency_ids?: string[] | null;
+  dependency_count?: number | null;
+  dependency_context_used?: boolean | null;
+  dependencies_used?: DependencyRef[] | null;
 };
 
 export type ExecuteTaskApiResponse = {

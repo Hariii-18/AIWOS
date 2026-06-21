@@ -15,6 +15,13 @@ class KnowledgeChunkRef(BaseModel):
     relevance_score: float
 
 
+class DependencyRef(BaseModel):
+    """Reference to a prior-phase execution used as dependency context."""
+    execution_id: str
+    task_title: str
+    task_phase: Optional[str] = None
+
+
 class ExecuteTaskRequest(BaseModel):
     model_config = ConfigDict(json_schema_extra={
         "example": {
@@ -52,6 +59,10 @@ class ExecutionResponse(BaseModel):
     fallback_provider: Optional[str] = None
     error_type: Optional[str] = None
     knowledge_chunks_used: Optional[list[KnowledgeChunkRef]] = None
+    dependency_ids: Optional[list[str]] = None
+    dependency_count: Optional[int] = None
+    dependency_context_used: Optional[bool] = None
+    dependencies_used: Optional[list[DependencyRef]] = None
 
     model_config = {"from_attributes": True}
 
@@ -70,4 +81,14 @@ class ExecutionResponse(BaseModel):
                     self.knowledge_chunks_used = [
                         KnowledgeChunkRef(**c) for c in raw
                     ]
+            if self.dependency_ids is None:
+                self.dependency_ids = self.output_data.get("dependency_ids")
+            if self.dependency_count is None:
+                self.dependency_count = self.output_data.get("dependency_count")
+            if self.dependency_context_used is None:
+                self.dependency_context_used = self.output_data.get("dependency_context_used")
+            if self.dependencies_used is None:
+                raw_deps = self.output_data.get("dependencies_used")
+                if raw_deps:
+                    self.dependencies_used = [DependencyRef(**d) for d in raw_deps]
         return self
